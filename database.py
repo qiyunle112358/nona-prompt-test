@@ -1,0 +1,257 @@
+"""
+SQLite数据库操作模块
+提供论文数据的CRUD操作
+"""
+
+import sqlite3
+import json
+import logging
+from datetime import datetime
+from typing import List, Dict, Optional
+from pathlib import Path
+
+logger = logging.getLogger(__name__)
+
+
+class Database:
+    """数据库操作类"""
+    
+    def __init__(self, db_path: str):
+        """初始化数据库连接"""
+        self.db_path = db_path
+        self._init_database()
+    
+    def _init_database(self):
+        """初始化数据库表"""
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS papers (
+                    id TEXT PRIMARY KEY,
+                    title TEXT NOT NULL,
+                    arxiv_id TEXT UNIQUE,
+                    pdf_url TEXT,
+                    authors TEXT,
+                    abstract TEXT,
+                    published_date TEXT,
+                    source TEXT,
+                    status TEXT DEFAULT 'pending',
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS analysis_results (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    paper_id TEXT NOT NULL,
+                    is_relevant INTEGER DEFAULT 0,
+                    relevance_score REAL DEFAULT 0.0,
+                    reasoning TEXT,
+                    summary TEXT,
+                    analyzed_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (paper_id) REFERENCES papers(id)
+                )
+            """)
+            
+            # 创建索引以提高查询性能
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_papers_status ON papers(status)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_papers_source ON papers(source)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_analysis_paper_id ON analysis_results(paper_id)")
+            
+            conn.commit()
+            logger.info("Database initialized successfully")
+    
+    def insert_paper(self, paper_data: Dict) -> bool:
+        """
+        插入论文记录
+        
+        Args:
+            paper_data: 论文数据字典
+            
+        Returns:
+            是否插入成功
+        """
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                # 生成ID（优先使用arxiv_id，否则使用title的hash）
+                paper_id = paper_data.get('arxiv_id') or str(hash(paper_data['title']))
+                
+                conn.execute("""
+                    INSERT OR IGNORE INTO papers 
+                    (id, title, arxiv_id, pdf_url, authors, abstract, published_date, source, status)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    paper_id,
+                    paper_data.get('title'),
+                    paper_data.get('arxiv_id'),
+                    paper_data.get('pdf_url'),
+                    json.dumps(paper_data.get('authors', [])),
+                    paper_data.get('abstract'),
+                    paper_data.get('published_date'),
+                    paper_data.get('source'),
+                    paper_data.get('status', 'pending')
+                ))
+                conn.commit()
+                return True
+        except Exception as e:
+            logger.error(f"Error inserting paper: {e}")
+            return False
+    
+    def batch_insert_papers(self, papers: List[Dict]) -> int:
+        """
+        批量插入论文记录
+        
+        Args:
+            papers: 论文数据列表
+            
+        Returns:
+            成功插入的数量
+        """
+        count = 0
+        for paper in papers:
+            if self.insert_paper(paper):
+                count += 1
+        logger.info(f"Batch inserted {count}/{len(papers)} papers")
+        return count
+    
+    def get_paper_by_id(self, paper_id: str) -> Optional[Dict]:
+        """根据ID获取论文"""
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.execute("SELECT * FROM papers WHERE id = ?", (paper_id,))
+            row = cursor.fetchone()
+            
+            if row:
+                return dict(row)
+            return None
+    
+    def get_papers_by_status(self, status: str, limit: int = None) -> List[Dict]:
+        """
+        根据状态获取论文列表
+        
+        Args:
+            status: 论文状态 (pending, downloaded, processed, analyzed)
+            limit: 返回数量限制
+            
+        Returns:
+            论文列表
+        """
+        query = "SELECT * FROM papers WHERE status = ?"
+        params = [status]
+        
+        if limit:
+            query += " LIMIT ?"
+            params.append(limit)
+        
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.execute(query, params)
+            rows = cursor.fetchall()
+            return [dict(row) for row in rows]
+    
+    def update_paper_status(self, paper_id: str, status: str) -> bool:
+        """更新论文状态"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                conn.execute(
+                    "UPDATE papers SET status = ? WHERE id = ?",
+                    (status, paper_id)
+                )
+                conn.commit()
+                return True
+        except Exception as e:
+            logger.error(f"Error updating paper status: {e}")
+            return False
+    
+    def update_paper_info(self, paper_id: str, updates: Dict) -> bool:
+        """更新论文信息"""
+        try:
+            # 构建更新语句
+            set_clause = ", ".join([f"{key} = ?" for key in updates.keys()])
+            values = list(updates.values()) + [paper_id]
+            
+            with sqlite3.connect(self.db_path) as conn:
+                conn.execute(
+                    f"UPDATE papers SET {set_clause} WHERE id = ?",
+                    values
+                )
+                conn.commit()
+                return True
+        except Exception as e:
+            logger.error(f"Error updating paper info: {e}")
+            return False
+    
+    def insert_analysis_result(self, result_data: Dict) -> bool:
+        """插入分析结果"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                conn.execute("""
+                    INSERT INTO analysis_results 
+                    (paper_id, is_relevant, relevance_score, reasoning, summary)
+                    VALUES (?, ?, ?, ?, ?)
+                """, (
+                    result_data['paper_id'],
+                    result_data.get('is_relevant', 0),
+                    result_data.get('relevance_score', 0.0),
+                    result_data.get('reasoning'),
+                    result_data.get('summary')
+                ))
+                conn.commit()
+                return True
+        except Exception as e:
+            logger.error(f"Error inserting analysis result: {e}")
+            return False
+    
+    def get_analysis_result(self, paper_id: str) -> Optional[Dict]:
+        """获取论文的分析结果"""
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.execute(
+                "SELECT * FROM analysis_results WHERE paper_id = ? ORDER BY analyzed_at DESC LIMIT 1",
+                (paper_id,)
+            )
+            row = cursor.fetchone()
+            
+            if row:
+                return dict(row)
+            return None
+    
+    def get_relevant_papers(self, min_score: float = 0.5) -> List[Dict]:
+        """获取相关的论文列表"""
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.execute("""
+                SELECT p.*, a.relevance_score, a.reasoning, a.summary
+                FROM papers p
+                JOIN analysis_results a ON p.id = a.paper_id
+                WHERE a.is_relevant = 1 AND a.relevance_score >= ?
+                ORDER BY a.relevance_score DESC
+            """, (min_score,))
+            rows = cursor.fetchall()
+            return [dict(row) for row in rows]
+    
+    def get_statistics(self) -> Dict:
+        """获取数据库统计信息"""
+        with sqlite3.connect(self.db_path) as conn:
+            # 总论文数
+            total = conn.execute("SELECT COUNT(*) FROM papers").fetchone()[0]
+            
+            # 各状态的论文数
+            status_counts = {}
+            for row in conn.execute("SELECT status, COUNT(*) as count FROM papers GROUP BY status"):
+                status_counts[row[0]] = row[1]
+            
+            # 已分析的论文数
+            analyzed = conn.execute("SELECT COUNT(*) FROM analysis_results").fetchone()[0]
+            
+            # 相关论文数
+            relevant = conn.execute(
+                "SELECT COUNT(*) FROM analysis_results WHERE is_relevant = 1"
+            ).fetchone()[0]
+            
+            return {
+                "total_papers": total,
+                "status_counts": status_counts,
+                "analyzed_papers": analyzed,
+                "relevant_papers": relevant
+            }
+
