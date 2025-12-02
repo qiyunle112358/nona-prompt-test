@@ -33,9 +33,17 @@ def download_pdf(pdf_url: str, save_path: Path, max_size_mb: int = 50) -> bool:
     try:
         logger.info(f"Downloading PDF from: {pdf_url}")
         
-        # 发送请求
-        response = requests.get(pdf_url, timeout=60, stream=True)
+        # 直接下载整个文件（不使用stream模式，避免卡住）
+        response = requests.get(pdf_url, timeout=30)
         response.raise_for_status()
+        
+        # 检查文件大小
+        file_size = len(response.content)
+        max_size = max_size_mb * 1024 * 1024
+        
+        if file_size > max_size:
+            logger.warning(f"PDF too large: {file_size / 1024 / 1024:.1f}MB (max: {max_size_mb}MB)")
+            return False
         
         # 检查Content-Type
         content_type = response.headers.get('Content-Type', '')
@@ -43,23 +51,12 @@ def download_pdf(pdf_url: str, save_path: Path, max_size_mb: int = 50) -> bool:
             logger.warning(f"URL did not return a PDF. Content-Type: {content_type}")
             return False
         
-        # 检查文件大小
-        content_length = response.headers.get('Content-Length')
-        if content_length:
-            size_mb = int(content_length) / (1024 * 1024)
-            if size_mb > max_size_mb:
-                logger.warning(f"PDF too large: {size_mb:.1f}MB (max: {max_size_mb}MB)")
-                return False
-        
-        # 下载文件
+        # 保存文件
         save_path.parent.mkdir(parents=True, exist_ok=True)
         
         with open(save_path, 'wb') as f:
-            for chunk in response.iter_content(chunk_size=8192):
-                if chunk:
-                    f.write(chunk)
+            f.write(response.content)
         
-        file_size = save_path.stat().st_size
         logger.info(f"✓ Downloaded: {save_path.name} ({file_size / 1024 / 1024:.1f}MB)")
         return True
         
