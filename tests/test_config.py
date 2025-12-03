@@ -25,7 +25,8 @@ def test_config():
     try:
         from config import (
             PROJECT_ROOT, DATA_DIR, PDF_DIR, TEXT_DIR, DB_PATH,
-            RELEVANCE_TAGS, get_api_key, get_model_name
+            RELEVANCE_TAGS, DEFAULT_LLM_PROVIDER,
+            get_api_key, get_model_name, get_base_url
         )
         
         # 测试1: 路径配置
@@ -48,22 +49,48 @@ def test_config():
         logger.info(f"✓ 相关性标签数量: {len(RELEVANCE_TAGS)}")
         logger.info(f"  标签: {', '.join(RELEVANCE_TAGS[:5])}...")
         
-        # 测试4: API配置
-        logger.info("\n[测试4] API配置")
+        # 测试4: LLM配置
+        logger.info("\n[测试4] LLM配置")
+        logger.info(f"  当前提供商: {DEFAULT_LLM_PROVIDER}")
+        
+        # 测试获取配置的函数
         try:
-            openai_key = get_api_key("openai")
-            if openai_key:
-                logger.info(f"✓ OpenAI API密钥已配置 (长度: {len(openai_key)})")
+            api_key = get_api_key()
+            if api_key:
+                logger.info(f"✓ API密钥已配置 (长度: {len(api_key)})")
             else:
-                logger.warning("⚠ OpenAI API密钥未配置")
+                logger.warning("⚠ API密钥未配置")
         except Exception as e:
-            logger.warning(f"⚠ 无法读取OpenAI API密钥: {e}")
+            logger.warning(f"⚠ 无法读取API密钥: {e}")
         
         try:
-            model = get_model_name("openai")
-            logger.info(f"✓ 默认OpenAI模型: {model}")
+            model = get_model_name()
+            if model:
+                logger.info(f"✓ 模型名称: {model}")
+            else:
+                logger.warning("⚠ 模型名称未配置")
         except Exception as e:
-            logger.error(f"✗ 无法读取模型配置: {e}")
+            logger.warning(f"⚠ 无法读取模型配置: {e}")
+        
+        try:
+            base_url = get_base_url()
+            if base_url:
+                logger.info(f"✓ Base URL: {base_url}")
+            else:
+                logger.warning("⚠ Base URL未配置")
+        except Exception as e:
+            logger.warning(f"⚠ 无法读取Base URL: {e}")
+        
+        # 测试5: 不同提供商的配置
+        logger.info("\n[测试5] 多提供商配置")
+        for provider in ["custom", "openai", "anthropic"]:
+            try:
+                key = get_api_key(provider)
+                model = get_model_name(provider)
+                url = get_base_url(provider)
+                logger.info(f"  {provider}: key={'✓' if key else '✗'}, model={'✓' if model else '✗'}, url={'✓' if url else '✗'}")
+            except Exception as e:
+                logger.warning(f"  {provider}: {e}")
         
         logger.info("\n" + "="*60)
         logger.info("✓ 配置模块测试通过")
@@ -80,4 +107,3 @@ def test_config():
 if __name__ == "__main__":
     success = test_config()
     sys.exit(0 if success else 1)
-

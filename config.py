@@ -22,15 +22,30 @@ DATA_DIR.mkdir(exist_ok=True)
 PDF_DIR.mkdir(exist_ok=True)
 TEXT_DIR.mkdir(exist_ok=True)
 
-# API密钥
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
-ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
-OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
+# ============================================================
+# LLM API 配置
+# ============================================================
 
-# LLM配置
-DEFAULT_LLM_PROVIDER = os.getenv("DEFAULT_LLM_PROVIDER", "openai")  # openai 或 anthropic
+# 通用 LLM 配置（推荐 - 支持任何兼容 OpenAI API 格式的服务）
+LLM_API_KEY = os.getenv("LLM_API_KEY", "")
+LLM_BASE_URL = os.getenv("LLM_BASE_URL", "")
+LLM_MODEL = os.getenv("LLM_MODEL", "")
+
+# OpenAI 配置（备选）
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
 DEFAULT_OPENAI_MODEL = os.getenv("DEFAULT_OPENAI_MODEL", "gpt-4o-mini")
+
+# Anthropic 配置（备选）
+ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 DEFAULT_ANTHROPIC_MODEL = os.getenv("DEFAULT_ANTHROPIC_MODEL", "claude-3-5-sonnet-20241022")
+
+# LLM 提供商选择：custom（推荐）, openai, anthropic
+DEFAULT_LLM_PROVIDER = os.getenv("DEFAULT_LLM_PROVIDER", "custom")
+
+# ============================================================
+# 业务配置
+# ============================================================
 
 # 相关性分析标签（可配置）
 RELEVANCE_TAGS = [
@@ -65,27 +80,79 @@ RATE_LIMIT_DELAY = 1  # 秒
 MAX_PDF_SIZE_MB = 50  # 最大PDF大小（MB）
 OCR_ENABLED = os.getenv("OCR_ENABLED", "true").lower() == "true"
 
+# ============================================================
+# 辅助函数
+# ============================================================
+
 def get_api_key(provider: str = None) -> str:
-    """获取指定提供商的API密钥"""
+    """
+    获取指定提供商的API密钥
+    
+    Args:
+        provider: 提供商名称，None表示使用默认提供商
+        
+    Returns:
+        API密钥字符串
+    """
     if provider is None:
         provider = DEFAULT_LLM_PROVIDER
     
-    if provider == "openai":
+    if provider == "custom":
+        return LLM_API_KEY
+    elif provider == "openai":
         return OPENAI_API_KEY
     elif provider == "anthropic":
         return ANTHROPIC_API_KEY
     else:
-        raise ValueError(f"Unknown provider: {provider}")
+        # 未知提供商，尝试返回通用配置
+        return LLM_API_KEY
+
 
 def get_model_name(provider: str = None) -> str:
-    """获取指定提供商的默认模型名称"""
+    """
+    获取指定提供商的模型名称
+    
+    Args:
+        provider: 提供商名称，None表示使用默认提供商
+        
+    Returns:
+        模型名称字符串
+    """
     if provider is None:
         provider = DEFAULT_LLM_PROVIDER
     
-    if provider == "openai":
+    if provider == "custom":
+        return LLM_MODEL
+    elif provider == "openai":
         return DEFAULT_OPENAI_MODEL
     elif provider == "anthropic":
         return DEFAULT_ANTHROPIC_MODEL
     else:
-        raise ValueError(f"Unknown provider: {provider}")
+        # 未知提供商，尝试返回通用配置
+        return LLM_MODEL
 
+
+def get_base_url(provider: str = None) -> str:
+    """
+    获取指定提供商的API基础URL
+    
+    Args:
+        provider: 提供商名称，None表示使用默认提供商
+        
+    Returns:
+        API基础URL字符串
+    """
+    if provider is None:
+        provider = DEFAULT_LLM_PROVIDER
+    
+    if provider == "custom":
+        return LLM_BASE_URL
+    elif provider == "openai":
+        return OPENAI_BASE_URL
+    elif provider == "anthropic":
+        # Anthropic使用官方SDK，不需要base_url
+        # 但为了兼容性，这里返回空字符串
+        return ""
+    else:
+        # 未知提供商，尝试返回通用配置
+        return LLM_BASE_URL

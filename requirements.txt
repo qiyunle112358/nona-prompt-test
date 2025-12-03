@@ -14,10 +14,6 @@ pytesseract==0.3.10
 camelot-py[cv]==0.11.0
 tabula-py==2.9.0
 
-# LLM API
-openai==1.12.0
-anthropic==0.18.0
-
 # 数据处理
 beautifulsoup4==4.12.3
 lxml==5.1.0
@@ -30,4 +26,3 @@ pyyaml==6.0.1
 
 # arXiv API (可选，用于直接搜索arXiv)
 arxiv==2.1.0
-

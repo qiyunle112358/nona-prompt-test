@@ -24,8 +24,8 @@ def main():
     parser = argparse.ArgumentParser(description='分析论文相关性')
     parser.add_argument('--limit', type=int, default=None, help='处理数量限制')
     parser.add_argument('--status', type=str, default='processed', help='要处理的论文状态')
-    parser.add_argument('--provider', type=str, choices=['openai', 'anthropic'], 
-                       default=DEFAULT_LLM_PROVIDER, help='LLM提供商')
+    parser.add_argument('--provider', type=str, 
+                       default=DEFAULT_LLM_PROVIDER, help='LLM提供商 (custom, openai, anthropic)')
     parser.add_argument('--min-score', type=float, default=0.5, help='最小相关性分数阈值')
     
     args = parser.parse_args()

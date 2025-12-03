@@ -1,76 +1,42 @@
 # 具身智能论文Survey工具
 
-一个用于自动收集、处理和筛选具身智能领域论文的Python工具。
+自动收集、处理和筛选具身智能领域论文的Python工具。
 
-## 功能特点
+## 功能
 
-- 📚 **论文收集**: 从NeurIPS、ICLR、ICML、CoRL、RSS、ICRA、IROS和arXiv自动收集论文标题
-- 🔍 **信息获取**: 使用arXiv和OpenAlex API获取论文详细信息
-- 📄 **PDF处理**: 下载PDF并使用OCR转换为结构化文本
-- 🤖 **AI分析**: 使用大语言模型判断论文相关性并生成总结
-
-## 项目结构
-
-```
-nona/
-├── config.py              # 配置管理
-├── database.py            # SQLite数据库操作
-├── collectors/            # 模块1: 论文标题收集
-│   ├── __init__.py
-│   ├── arxiv.py
-│   ├── neurips.py
-│   ├── iclr.py
-│   ├── icml.py
-│   ├── corl.py
-│   ├── rss.py
-│   ├── icra.py
-│   └── iros.py
-├── fetchers/              # 模块2: 论文信息获取
-│   ├── __init__.py
-│   └── paper_fetcher.py
-├── processors/            # 模块3: PDF处理
-│   ├── __init__.py
-│   ├── pdf_downloader.py
-│   └── pdf_to_text.py
-├── analyzers/             # 模块4: AI分析
-│   ├── __init__.py
-│   └── relevance_filter.py
-├── scripts/               # 执行脚本
-│   ├── collect_titles.py
-│   ├── fetch_paper_info.py
-│   ├── process_pdfs.py
-│   └── analyze_papers.py
-├── tests/                 # 测试模块
-│   ├── test_config.py
-│   ├── test_database.py
-│   ├── test_collectors.py
-│   ├── test_fetchers.py
-│   ├── test_processors.py
-│   ├── test_analyzers.py
-│   └── run_all_tests.py
-└── data/                  # 数据目录
-    ├── papers.db
-    ├── pdfs/
-    └── texts/
-```
+- 从NeurIPS、ICLR、ICML、CoRL、RSS、ICRA、IROS和arXiv收集论文
+- 获取论文详细信息（arXiv ID、PDF链接等）
+- 下载PDF并转换为文本
+- 使用LLM分析论文相关性并生成总结
 
 ## 安装
 
-1. 克隆项目：
 ```bash
 git clone <repository-url>
 cd nona
-```
-
-2. 安装依赖：
-```bash
 pip install -r requirements.txt
 ```
 
-3. 配置环境变量：
+## 配置
+
+1. 复制配置文件：
 ```bash
-cp .env.example .env
-# 编辑 .env 文件，填入你的API密钥
+cp env.example .env
+```
+
+2. 编辑 `.env`，配置LLM API：
+```bash
+DEFAULT_LLM_PROVIDER=custom
+LLM_API_KEY=your-api-key-here
+LLM_BASE_URL=https://openrouter.ai/api/v1
+LLM_MODEL=deepseek/deepseek-chat
+```
+
+支持的服务：OpenRouter、DeepSeek、Gemini、智谱AI、硅基流动、OpenAI等。详见 `env.example`。
+
+3. 测试配置：
+```bash
+python tests/test_llm_config.py
 ```
 
 ## 使用方法
@@ -78,25 +44,47 @@ cp .env.example .env
 ### 1. 收集论文标题
 
 ```bash
-# 收集NeurIPS 2024的论文
-python scripts/collect_titles.py --source neurips --year 2024
+# 基本格式
+python scripts/collect_titles.py --source <来源> --year <年份>
 
-# 收集arXiv 2025年的cs.RO论文
+# 收集各会议论文
+python scripts/collect_titles.py --source neurips --year 2024
+python scripts/collect_titles.py --source iclr --year 2025
+python scripts/collect_titles.py --source icml --year 2024
+python scripts/collect_titles.py --source corl --year 2024
+python scripts/collect_titles.py --source rss --year 2024
+python scripts/collect_titles.py --source icra --year 2024
+python scripts/collect_titles.py --source iros --year 2024
+
+# 收集arXiv论文（可指定分类）
 python scripts/collect_titles.py --source arxiv --year 2025
+python scripts/collect_titles.py --source arxiv --year 2025 --arxiv-category cs.RO
 
 # 收集所有来源
-python scripts/collect_titles.py --all
+python scripts/collect_titles.py --source all --year 2024
 ```
+
+**参数说明**：
+- `--source`: 论文来源，可选值：`arxiv`, `neurips`, `iclr`, `icml`, `corl`, `rss`, `icra`, `iros`, `all`（默认：`all`）
+- `--year`: 年份（默认：`2024`）
+- `--arxiv-category`: arXiv分类，仅对`arxiv`有效（默认：`cs.RO`），常见分类：`cs.RO`, `cs.AI`, `cs.CV`, `cs.LG`, `cs.CL`
 
 ### 2. 获取论文详细信息
 
 ```bash
-# 获取待处理论文的详细信息
+# 获取待处理论文的详细信息（ArxivID、PDF下载url等）
 python scripts/fetch_paper_info.py
 
 # 限制处理数量
 python scripts/fetch_paper_info.py --limit 100
+
+# 处理指定状态的论文
+python scripts/fetch_paper_info.py --status pending --limit 50
 ```
+
+**参数说明**：
+- `--limit`: 处理数量限制（可选，不指定则处理所有）
+- `--status`: 要处理的论文状态（默认：`pending`），可选值：`pending`, `downloaded`, `processed`, `analyzed`
 
 ### 3. 处理PDF文件
 
@@ -106,7 +94,22 @@ python scripts/process_pdfs.py
 
 # 限制处理数量
 python scripts/process_pdfs.py --limit 50
+
+# 只下载PDF，不进行文本转换
+python scripts/process_pdfs.py --skip-convert --limit 100
+
+# 只进行文本转换，跳过下载（适用于已下载的PDF）
+python scripts/process_pdfs.py --skip-download
+
+# 处理指定状态的论文
+python scripts/process_pdfs.py --status downloaded --limit 50
 ```
+
+**参数说明**：
+- `--limit`: 处理数量限制（可选）
+- `--status`: 要处理的论文状态（默认：`downloaded`）
+- `--skip-download`: 跳过下载步骤，只进行文本转换
+- `--skip-convert`: 跳过文本转换步骤，只进行下载
 
 ### 4. AI分析和筛选
 
@@ -115,55 +118,80 @@ python scripts/process_pdfs.py --limit 50
 python scripts/analyze_papers.py
 
 # 使用特定的LLM提供商
+python scripts/analyze_papers.py --provider custom
+python scripts/analyze_papers.py --provider openai
 python scripts/analyze_papers.py --provider anthropic
 
 # 限制处理数量
 python scripts/analyze_papers.py --limit 20
+
+# 设置最小相关性分数阈值（0.0-1.0）
+python scripts/analyze_papers.py --min-score 0.7 --limit 20
+
+# 处理指定状态的论文
+python scripts/analyze_papers.py --status processed --limit 50
 ```
 
-## 数据库状态
+**参数说明**：
+- `--limit`: 处理数量限制（可选）
+- `--status`: 要处理的论文状态（默认：`processed`）
+- `--provider`: LLM提供商，可选值：`custom`, `openai`, `anthropic`（默认：`.env`中配置的`DEFAULT_LLM_PROVIDER`）
+- `--min-score`: 最小相关性分数阈值（默认：`0.5`），只有分数≥此值的论文才会被标记为相关
 
-论文在处理流程中的状态变化：
+### 5. 辅助操作
+```
+# 删除数据库与全部pdf、txt文本（谨慎操作）
+python scripts/clean_data.py
 
-1. `pending` - 刚收集的标题，等待获取详细信息
-2. `downloaded` - 已获取详细信息，等待下载PDF
-3. `processed` - PDF已下载并转换为文本
-4. `analyzed` - 已完成AI分析
+# 检查当前数据库情况
+python scripts/quick_verify.py
+```
 
-## 配置说明
 
-### API密钥
+## 完整工作流示例
 
-在 `.env` 文件中配置：
+```bash
+# 1. 收集论文标题
+python scripts/collect_titles.py --source arxiv --year 2025
 
-- `OPENAI_API_KEY`: OpenAI API密钥
-- `ANTHROPIC_API_KEY`: Anthropic API密钥
-- `DEFAULT_LLM_PROVIDER`: 默认使用的LLM提供商
+# 2. 获取论文信息（限制100篇避免API超额）
+python scripts/fetch_paper_info.py --limit 100
 
-### 相关性标签
+# 3. 下载并处理PDF（限制50篇节省空间和时间）
+python scripts/process_pdfs.py --limit 50
 
-在 `config.py` 中的 `RELEVANCE_TAGS` 列表中配置需要筛选的研究主题。
+# 4. AI分析论文相关性（限制20篇控制成本）
+python scripts/analyze_papers.py --limit 20
+```
 
-## 注意事项
+## 数据
 
-- 确保有足够的磁盘空间存储PDF文件
-- API调用可能产生费用，建议先小批量测试
-- 某些会议网站可能需要额外的访问权限
-- OCR处理较慢，建议分批处理
+所有数据保存在 `data/papers.db` 数据库中。
 
-## 依赖库
+**论文状态流程**：
+```
+pending → downloaded → processed → analyzed
+```
 
-主要依赖：
+**查询相关论文**：
+```sql
+SELECT p.title, a.relevance_score, a.reasoning, a.summary
+FROM papers p
+JOIN analysis_results a ON p.id = a.paper_id
+WHERE a.is_relevant = 1
+ORDER BY a.relevance_score DESC;
+```
 
-- `requests`: HTTP请求
-- `PyMuPDF/pdfplumber`: PDF处理
-- `openai/anthropic`: LLM API
-- `beautifulsoup4`: 网页解析
-- `tqdm`: 进度显示
+## 自定义
 
-详见 `requirements.txt`
+编辑 `config.py` 中的 `RELEVANCE_TAGS` 列表来自定义筛选主题：
 
-## 许可证
-
-MIT License
+```python
+RELEVANCE_TAGS = [
+    "机器人",
+    "具身智能",
+    "灵巧手",
+    # 添加你的关键词
+]
+```
 
