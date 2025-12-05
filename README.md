@@ -12,7 +12,7 @@
 ## 安装
 
 ```bash
-git clone <repository-url>
+git clone https://github.com/jyozhou/nona.git
 cd nona
 pip install -r requirements.txt
 ```
@@ -80,12 +80,12 @@ python scripts/fetch_paper_info.py
 python scripts/fetch_paper_info.py --limit 100
 
 # 处理指定状态的论文
-python scripts/fetch_paper_info.py --status pending --limit 50
+python scripts/fetch_paper_info.py --status pendingTitles --limit 50
 ```
 
 **参数说明**：
 - `--limit`: 处理数量限制（可选，不指定则处理所有）
-- `--status`: 要处理的论文状态（默认：`pending`），可选值：`pending`, `downloaded`, `processed`, `analyzed`
+- `--status`: 要处理的论文状态（默认：`pendingTitles`），可选值：`pendingTitles`, `TobeDownloaded`, `processed`, `analyzed`
 
 ### 3. 处理PDF文件
 
@@ -102,18 +102,18 @@ python scripts/process_pdfs.py --skip-convert --limit 100
 # 只进行文本转换，跳过下载（适用于已下载的PDF）
 python scripts/process_pdfs.py --skip-download
 
-# 处理指定状态的论文
-python scripts/process_pdfs.py --status downloaded --limit 50
 ```
 
 **参数说明**：
 - `--limit`: 处理数量限制（可选）
-- `--status`: 要处理的论文状态（默认：`downloaded`）
+- `--status`: 要处理的论文状态（默认：`TobeDownloaded`）
 - `--skip-download`: 跳过下载步骤，只进行文本转换
 - `--skip-convert`: 跳过文本转换步骤，只进行下载
 
 **注释**：
 - corl、iclr、icml、icra、iros等会议第一篇文章下载失败是正常现象，在dblp爬取会议接收文章标题列表时获取到的第一个标题是当年会议记录出版信息
+- 获取详情失败的标题会被保存到`detail_failures`表，PDF下载失败的记录会被保存到`download_failures`表，可通过 `scripts/retry_failures.py` 重新入队
+- 在海量数据里存在一定比例的详情获取/下载失败是正常情况，脚本会自动跳过并记录到上述失败列表中，整体任务仍会继续执行
 
 ### 4. AI分析和筛选
 
@@ -149,6 +149,12 @@ python scripts/clean_data.py
 
 # 检查当前数据库情况
 python scripts/quick_verify.py
+
+# 将获取详情失败的条目重新放回pendingTitles队列
+python scripts/retry_failures.py --type detail
+
+# 将下载失败的条目重新放回TobeDownloaded队列
+python scripts/retry_failures.py --type download
 ```
 
 
@@ -174,7 +180,7 @@ python scripts/analyze_papers.py --limit 20
 
 **论文状态流程**：
 ```
-pending → downloaded → processed → analyzed
+pendingTitles → TobeDownloaded → processed → analyzed
 ```
 
 **查询相关论文**：

@@ -46,7 +46,7 @@ def example_workflow():
             'title': paper['title'],
             'source': paper['source'],
             'published_date': paper.get('published_date', ''),
-            'status': 'pending'
+            'status': 'pendingTitles'
         })
     
     # ========== 步骤2: 获取论文详细信息 ==========
@@ -54,7 +54,7 @@ def example_workflow():
     logger.info("-"*80)
     
     # 获取待处理的论文
-    pending_papers = db.get_papers_by_status('pending', limit=5)
+    pending_papers = db.get_papers_by_status('pendingTitles', limit=5)
     
     for paper in pending_papers:
         logger.info(f"\n处理: {paper['title']}")
@@ -67,20 +67,23 @@ def example_workflow():
             db.update_paper_info(paper['id'], {
                 'arxiv_id': info.get('arxiv_id'),
                 'pdf_url': info.get('pdf_url'),
-                'authors': str(info.get('authors', [])),
+                'authors': info.get('authors', []),
                 'abstract': info.get('abstract'),
-                'status': 'downloaded'
+                'status': 'TobeDownloaded'
             })
+            db.remove_detail_failure(paper['id'])
             logger.info("✓ 成功获取信息")
         else:
             logger.warning("✗ 未找到论文信息")
+            db.update_paper_status(paper['id'], 'detailFailed')
+            db.record_detail_failure(paper['id'], paper['title'], paper.get('source'), "示例流程未找到")
     
     # ========== 步骤3: 下载和处理PDF ==========
     logger.info("\n步骤3: 下载和处理PDF")
     logger.info("-"*80)
     
     # 获取已下载信息的论文
-    downloaded_papers = db.get_papers_by_status('downloaded', limit=3)
+    downloaded_papers = db.get_papers_by_status('TobeDownloaded', limit=3)
     
     for paper in downloaded_papers:
         arxiv_id = paper.get('arxiv_id')
@@ -95,6 +98,7 @@ def example_workflow():
         pdf_path = PDF_DIR / f"{arxiv_id}.pdf"
         if download_pdf(pdf_url, pdf_path):
             logger.info("✓ PDF下载成功")
+            db.remove_download_failure(paper['id'])
             
             # 转换为文本
             text_path = TEXT_DIR / f"{arxiv_id}.txt"
@@ -107,6 +111,8 @@ def example_workflow():
                 logger.warning("✗ 文本转换失败")
         else:
             logger.warning("✗ PDF下载失败")
+            db.update_paper_status(paper['id'], 'downloadFailed')
+            db.record_download_failure(paper['id'], paper['title'], arxiv_id, pdf_url, "示例流程下载失败")
     
     # ========== 步骤4: AI分析和筛选 ==========
     logger.info("\n步骤4: AI分析和筛选")

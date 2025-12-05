@@ -104,7 +104,7 @@ def main():
                 'title': paper['title'],
                 'source': paper.get('source', 'unknown'),
                 'published_date': paper.get('published_date', ''),
-                'status': 'pending'
+                'status': 'pendingTitles'
             })
         
         count = db.batch_insert_papers(papers_to_insert)

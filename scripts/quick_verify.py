@@ -29,12 +29,18 @@ def main():
         print(f"  相关论文: {stats['relevant_papers']}")
         
         # 显示各状态的论文数量
-        for status in ['pending', 'downloaded', 'processed', 'analyzed']:
+        for status in ['pendingTitles', 'TobeDownloaded', 'processed', 'analyzed', 'detailFailed', 'downloadFailed']:
             papers = db.get_papers_by_status(status)
             if papers:
                 print(f"\n  {status.upper()} ({len(papers)} 篇):")
                 for paper in papers[:3]:
                     print(f"    - {paper['title'][:60]}...")
+
+        failure_counts = stats.get('failure_counts', {})
+        if failure_counts:
+            print("\n⚠️ 失败记录:")
+            print(f"  详情获取失败: {failure_counts.get('detail_failures', 0)} 条")
+            print(f"  PDF下载失败: {failure_counts.get('download_failures', 0)} 条")
     else:
         print("\n📊 数据库: 不存在")
     

@@ -13,7 +13,13 @@ import time
 logger = logging.getLogger(__name__)
 
 
-def download_pdf(pdf_url: str, save_path: Path, max_size_mb: int = 50) -> bool:
+def download_pdf(
+    pdf_url: str,
+    save_path: Path,
+    max_size_mb: int = 100,
+    max_duration_sec: int = 20,
+    timeout_retry: int = 1,
+) -> bool:
     """
     下载PDF文件
     
@@ -21,6 +27,8 @@ def download_pdf(pdf_url: str, save_path: Path, max_size_mb: int = 50) -> bool:
         pdf_url: PDF文件URL
         save_path: 保存路径
         max_size_mb: 最大文件大小（MB）
+        max_duration_sec: 允许的最长下载时间（秒），超时自动再次尝试
+        timeout_retry: 允许的超时重试次数（默认1次，即最多下载2次）
         
     Returns:
         是否下载成功
@@ -30,47 +38,75 @@ def download_pdf(pdf_url: str, save_path: Path, max_size_mb: int = 50) -> bool:
         logger.info(f"PDF already exists: {save_path.name}")
         return True
     
-    try:
-        logger.info(f"Downloading PDF from: {pdf_url}")
-        
-        # 直接下载整个文件（不使用stream模式，避免卡住）
-        response = requests.get(pdf_url, timeout=30)
-        response.raise_for_status()
-        
-        # 检查文件大小
-        file_size = len(response.content)
-        max_size = max_size_mb * 1024 * 1024
-        
-        if file_size > max_size:
-            logger.warning(f"PDF too large: {file_size / 1024 / 1024:.1f}MB (max: {max_size_mb}MB)")
-            return False
-        
-        # 检查Content-Type
-        content_type = response.headers.get('Content-Type', '')
-        if 'application/pdf' not in content_type and 'octet-stream' not in content_type:
-            logger.warning(f"URL did not return a PDF. Content-Type: {content_type}")
-            return False
-        
-        # 保存文件
-        save_path.parent.mkdir(parents=True, exist_ok=True)
-        
-        with open(save_path, 'wb') as f:
-            f.write(response.content)
-        
-        logger.info(f"✓ Downloaded: {save_path.name} ({file_size / 1024 / 1024:.1f}MB)")
-        return True
-        
-    except requests.exceptions.RequestException as e:
-        logger.error(f"Error downloading PDF from {pdf_url}: {e}")
-        # 删除可能部分下载的文件
+    attempts = 0
+    max_attempts_on_timeout = timeout_retry + 1  # first attempt + retries
+
+    def _cleanup():
         if save_path.exists():
             save_path.unlink()
-        return False
-    except Exception as e:
-        logger.error(f"Unexpected error downloading PDF: {e}")
-        if save_path.exists():
-            save_path.unlink()
-        return False
+
+    while attempts < max_attempts_on_timeout:
+        try:
+            logger.info(f"Downloading PDF from: {pdf_url} (attempt {attempts + 1})")
+
+            start_time = time.monotonic()
+            max_size = max_size_mb * 1024 * 1024
+            downloaded_bytes = 0
+
+            with requests.get(pdf_url, stream=True, timeout=10) as response:
+                response.raise_for_status()
+
+                content_type = response.headers.get('Content-Type', '')
+                if 'application/pdf' not in content_type and 'octet-stream' not in content_type:
+                    logger.warning(f"URL did not return a PDF. Content-Type: {content_type}")
+                    return False
+
+                save_path.parent.mkdir(parents=True, exist_ok=True)
+
+                with open(save_path, 'wb') as f:
+                    for chunk in response.iter_content(chunk_size=8192):
+                        if not chunk:
+                            continue
+
+                        elapsed = time.monotonic() - start_time
+                        if elapsed > max_duration_sec:
+                            raise TimeoutError(
+                                f"Download exceeded {max_duration_sec} seconds for {pdf_url}"
+                            )
+
+                        downloaded_bytes += len(chunk)
+                        if downloaded_bytes > max_size:
+                            raise ValueError(
+                                f"PDF too large: {downloaded_bytes / 1024 / 1024:.1f}MB "
+                                f"(max: {max_size_mb}MB)"
+                            )
+
+                        f.write(chunk)
+
+            logger.info(f"✓ Downloaded: {save_path.name} ({downloaded_bytes / 1024 / 1024:.1f}MB)")
+            return True
+
+        except TimeoutError as e:
+            attempts += 1
+            logger.warning(str(e))
+            _cleanup()
+            if attempts >= max_attempts_on_timeout:
+                logger.warning("Download aborted after timeout retries exhausted.")
+                return False
+            logger.info("Retrying download after timeout...")
+            continue
+        except ValueError as e:
+            logger.warning(str(e))
+            _cleanup()
+            return False
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Error downloading PDF from {pdf_url}: {e}")
+            _cleanup()
+            return False
+        except Exception as e:
+            logger.error(f"Unexpected error downloading PDF: {e}")
+            _cleanup()
+            return False
 
 
 def batch_download_pdfs(

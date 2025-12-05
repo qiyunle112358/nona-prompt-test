@@ -34,7 +34,7 @@ class Database:
                     abstract TEXT,
                     published_date TEXT,
                     source TEXT,
-                    status TEXT DEFAULT 'pending',
+                    status TEXT DEFAULT 'pendingTitles',
                     created_at TEXT DEFAULT CURRENT_TIMESTAMP
                 )
             """)
@@ -51,12 +51,38 @@ class Database:
                     FOREIGN KEY (paper_id) REFERENCES papers(id)
                 )
             """)
+
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS detail_failures (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    paper_id TEXT UNIQUE,
+                    title TEXT NOT NULL,
+                    source TEXT,
+                    reason TEXT,
+                    failed_at TEXT DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS download_failures (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    paper_id TEXT UNIQUE,
+                    title TEXT NOT NULL,
+                    arxiv_id TEXT,
+                    pdf_url TEXT,
+                    reason TEXT,
+                    failed_at TEXT DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
             
             # 创建索引以提高查询性能
             conn.execute("CREATE INDEX IF NOT EXISTS idx_papers_status ON papers(status)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_papers_source ON papers(source)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_analysis_paper_id ON analysis_results(paper_id)")
-            
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_detail_failures_time ON detail_failures(failed_at)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_download_failures_time ON download_failures(failed_at)")
+
+            self._migrate_status_names(conn)
             conn.commit()
             logger.info("Database initialized successfully")
     
@@ -88,7 +114,7 @@ class Database:
                     paper_data.get('abstract'),
                     paper_data.get('published_date'),
                     paper_data.get('source'),
-                    paper_data.get('status', 'pending')
+                    paper_data.get('status', 'pendingTitles')
                 ))
                 conn.commit()
                 return True
@@ -129,7 +155,7 @@ class Database:
         根据状态获取论文列表
         
         Args:
-            status: 论文状态 (pending, downloaded, processed, analyzed)
+        status: 论文状态 (pendingTitles, TobeDownloaded, processed, analyzed)
             limit: 返回数量限制
             
         Returns:
@@ -166,8 +192,12 @@ class Database:
         """更新论文信息"""
         try:
             # 构建更新语句
-            set_clause = ", ".join([f"{key} = ?" for key in updates.keys()])
-            values = list(updates.values()) + [paper_id]
+            normalized_updates = dict(updates)
+            if "authors" in normalized_updates and isinstance(normalized_updates["authors"], list):
+                normalized_updates["authors"] = json.dumps(normalized_updates["authors"])
+
+            set_clause = ", ".join([f"{key} = ?" for key in normalized_updates.keys()])
+            values = list(normalized_updates.values()) + [paper_id]
             
             with sqlite3.connect(self.db_path) as conn:
                 conn.execute(
@@ -247,11 +277,108 @@ class Database:
             relevant = conn.execute(
                 "SELECT COUNT(*) FROM analysis_results WHERE is_relevant = 1"
             ).fetchone()[0]
+
+            detail_failures = conn.execute("SELECT COUNT(*) FROM detail_failures").fetchone()[0]
+            download_failures = conn.execute("SELECT COUNT(*) FROM download_failures").fetchone()[0]
             
             return {
                 "total_papers": total,
                 "status_counts": status_counts,
                 "analyzed_papers": analyzed,
-                "relevant_papers": relevant
+                "relevant_papers": relevant,
+                "failure_counts": {
+                    "detail_failures": detail_failures,
+                    "download_failures": download_failures,
+                },
             }
+
+    def record_detail_failure(self, paper_id: str, title: str, source: Optional[str] = None, reason: str = "") -> None:
+        """记录获取详细信息失败"""
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute(
+                """
+                INSERT INTO detail_failures (paper_id, title, source, reason, failed_at)
+                VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+                ON CONFLICT(paper_id) DO UPDATE SET
+                    title=excluded.title,
+                    source=excluded.source,
+                    reason=excluded.reason,
+                    failed_at=CURRENT_TIMESTAMP
+                """,
+                (paper_id, title, source, reason),
+            )
+            conn.commit()
+
+    def record_download_failure(
+        self,
+        paper_id: str,
+        title: str,
+        arxiv_id: Optional[str],
+        pdf_url: Optional[str],
+        reason: str = "",
+    ) -> None:
+        """记录PDF下载失败"""
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute(
+                """
+                INSERT INTO download_failures (paper_id, title, arxiv_id, pdf_url, reason, failed_at)
+                VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                ON CONFLICT(paper_id) DO UPDATE SET
+                    title=excluded.title,
+                    arxiv_id=excluded.arxiv_id,
+                    pdf_url=excluded.pdf_url,
+                    reason=excluded.reason,
+                    failed_at=CURRENT_TIMESTAMP
+                """,
+                (paper_id, title, arxiv_id, pdf_url, reason),
+            )
+            conn.commit()
+
+    def get_detail_failures(self, limit: Optional[int] = None) -> List[Dict]:
+        """获取详细信息失败列表"""
+        query = "SELECT * FROM detail_failures ORDER BY failed_at DESC"
+        params: List = []
+
+        if limit:
+            query += " LIMIT ?"
+            params.append(limit)
+
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(query, params).fetchall()
+            return [dict(row) for row in rows]
+
+    def get_download_failures(self, limit: Optional[int] = None) -> List[Dict]:
+        """获取PDF下载失败列表"""
+        query = "SELECT * FROM download_failures ORDER BY failed_at DESC"
+        params: List = []
+
+        if limit:
+            query += " LIMIT ?"
+            params.append(limit)
+
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(query, params).fetchall()
+            return [dict(row) for row in rows]
+
+    def remove_detail_failure(self, paper_id: str) -> None:
+        """移除指定论文的详细信息失败记录"""
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute("DELETE FROM detail_failures WHERE paper_id = ?", (paper_id,))
+            conn.commit()
+
+    def remove_download_failure(self, paper_id: str) -> None:
+        """移除指定论文的PDF下载失败记录"""
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute("DELETE FROM download_failures WHERE paper_id = ?", (paper_id,))
+            conn.commit()
+
+    def _migrate_status_names(self, conn: sqlite3.Connection) -> None:
+        """迁移旧的状态命名"""
+        try:
+            conn.execute("UPDATE papers SET status='pendingTitles' WHERE status='pending'")
+            conn.execute("UPDATE papers SET status='TobeDownloaded' WHERE status='downloaded'")
+        except sqlite3.OperationalError as exc:
+            logger.debug("Status migration skipped: %s", exc)
 

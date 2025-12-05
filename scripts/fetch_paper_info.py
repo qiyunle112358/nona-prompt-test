@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 def main():
     parser = argparse.ArgumentParser(description='获取论文详细信息')
     parser.add_argument('--limit', type=int, default=None, help='处理数量限制')
-    parser.add_argument('--status', type=str, default='pending', help='要处理的论文状态')
+    parser.add_argument('--status', type=str, default='pendingTitles', help='要处理的论文状态')
     
     args = parser.parse_args()
     
@@ -61,25 +61,33 @@ def main():
                 updates = {
                     'arxiv_id': info.get('arxiv_id'),
                     'pdf_url': info.get('pdf_url'),
-                    'authors': str(info.get('authors', [])),
+                    'authors': info.get('authors', []),
                     'abstract': info.get('abstract'),
                     'published_date': info.get('published_date'),
-                    'status': 'downloaded'
+                    'status': 'TobeDownloaded'
                 }
                 
                 db.update_paper_info(paper_id, updates)
+                db.remove_detail_failure(paper_id)
                 success_count += 1
-                logger.info(f"✓ 成功获取信息")
+                logger.info("✓ 成功获取信息")
             else:
-                logger.warning(f"✗ 未找到论文信息")
+                reason = "未找到论文信息"
+                logger.warning(f"✗ {reason}")
+                db.update_paper_status(paper_id, 'detailFailed')
+                db.record_detail_failure(paper_id, title, paper.get('source'), reason)
                 
         except Exception as e:
-            logger.error(f"✗ 处理失败: {e}")
+            reason = str(e)
+            logger.error(f"✗ 处理失败: {reason}")
+            db.update_paper_status(paper_id, 'detailFailed')
+            db.record_detail_failure(paper_id, title, paper.get('source'), reason)
             continue
     
     logger.info(f"\n{'='*80}")
     logger.info(f"处理完成: {success_count}/{len(papers)} 篇成功")
     logger.info(f"{'='*80}\n")
+    logger.info("提示：未成功的标题已记录到 detail_failures，可用 scripts/retry_failures.py --type detail 重试。")
     
     # 显示统计信息
     stats = db.get_statistics()

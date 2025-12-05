@@ -52,7 +52,7 @@ def test_database():
             'abstract': 'This is a test paper about deep learning.',
             'published_date': '2024-01-01',
             'source': 'arXiv2024',
-            'status': 'pending'
+            'status': 'pendingTitles'
         }
         
         result = db.insert_paper(paper1)
@@ -72,7 +72,7 @@ def test_database():
             {
                 'title': f'测试论文{i}: Test Paper {i}',
                 'source': 'NeurIPS2024',
-                'status': 'pending'
+                'status': 'pendingTitles'
             }
             for i in range(2, 5)
         ]
@@ -82,17 +82,17 @@ def test_database():
         
         # 测试5: 按状态查询
         logger.info("\n[测试5] 按状态查询")
-        pending_papers = db.get_papers_by_status('pending')
+        pending_papers = db.get_papers_by_status('pendingTitles')
         assert len(pending_papers) >= 3, "查询结果数量不正确"
         logger.info(f"✓ 状态查询成功: 找到{len(pending_papers)}篇待处理论文")
         
         # 测试6: 更新状态
         logger.info("\n[测试6] 更新论文状态")
-        result = db.update_paper_status('2024.12345', 'downloaded')
+        result = db.update_paper_status('2024.12345', 'TobeDownloaded')
         assert result, "更新状态失败"
         
         updated = db.get_paper_by_id('2024.12345')
-        assert updated['status'] == 'downloaded', "状态未更新"
+        assert updated['status'] == 'TobeDownloaded', "状态未更新"
         logger.info("✓ 状态更新成功")
         
         # 测试7: 更新论文信息
@@ -117,6 +117,26 @@ def test_database():
         result = db.insert_analysis_result(analysis)
         assert result, "插入分析结果失败"
         logger.info("✓ 分析结果插入成功")
+
+        # 测试8.1: 记录详情获取失败
+        logger.info("\n[测试8.1] 记录详情获取失败")
+        db.record_detail_failure('2024.12345', paper1['title'], paper1['source'], '测试失败')
+        detail_failures = db.get_detail_failures()
+        assert len(detail_failures) == 1, "详情失败记录数量不正确"
+        db.remove_detail_failure('2024.12345')
+        detail_failures = db.get_detail_failures()
+        assert len(detail_failures) == 0, "详情失败记录未删除"
+        logger.info("✓ 详情失败记录管理成功")
+
+        # 测试8.2: 记录PDF下载失败
+        logger.info("\n[测试8.2] 记录PDF下载失败")
+        db.record_download_failure('2024.12345', paper1['title'], '2024.12345', paper1['pdf_url'], '下载失败')
+        download_failures = db.get_download_failures()
+        assert len(download_failures) == 1, "下载失败记录数量不正确"
+        db.remove_download_failure('2024.12345')
+        download_failures = db.get_download_failures()
+        assert len(download_failures) == 0, "下载失败记录未删除"
+        logger.info("✓ 下载失败记录管理成功")
         
         # 测试9: 查询分析结果
         logger.info("\n[测试9] 查询分析结果")

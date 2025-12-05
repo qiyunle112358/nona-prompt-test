@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 def main():
     parser = argparse.ArgumentParser(description='处理PDF文件')
     parser.add_argument('--limit', type=int, default=None, help='处理数量限制')
-    parser.add_argument('--status', type=str, default='downloaded', help='要处理的论文状态')
+    parser.add_argument('--status', type=str, default='TobeDownloaded', help='要处理的论文状态')
     parser.add_argument('--skip-download', action='store_true', help='跳过下载，只进行文本转换')
     parser.add_argument('--skip-convert', action='store_true', help='跳过文本转换，只进行下载')
     
@@ -58,7 +58,10 @@ def main():
         logger.info(f"[{i}/{len(papers)}] 处理: {title}")
         
         if not arxiv_id or not pdf_url:
-            logger.warning(f"✗ 缺少arXiv ID或PDF URL")
+            reason = "缺少arXiv ID或PDF URL"
+            logger.warning(f"✗ {reason}")
+            db.update_paper_status(paper_id, 'downloadFailed')
+            db.record_download_failure(paper_id, title, arxiv_id, pdf_url, reason)
             continue
         
         pdf_path = PDF_DIR / f"{arxiv_id}.pdf"
@@ -69,8 +72,12 @@ def main():
             if not args.skip_download:
                 if download_pdf(pdf_url, pdf_path):
                     download_success += 1
+                    db.remove_download_failure(paper_id)
                 else:
-                    logger.warning(f"✗ PDF下载失败")
+                    reason = "PDF下载失败"
+                    logger.warning(f"✗ {reason}")
+                    db.update_paper_status(paper_id, 'downloadFailed')
+                    db.record_download_failure(paper_id, title, arxiv_id, pdf_url, reason)
                     continue
             
             # 转换为文本
@@ -84,7 +91,10 @@ def main():
                     logger.warning(f"✗ 文本转换失败")
                     
         except Exception as e:
-            logger.error(f"✗ 处理失败: {e}")
+            reason = str(e)
+            logger.error(f"✗ 处理失败: {reason}")
+            db.update_paper_status(paper_id, 'downloadFailed')
+            db.record_download_failure(paper_id, title, arxiv_id, pdf_url, reason)
             continue
     
     logger.info(f"\n{'='*80}")
@@ -94,6 +104,7 @@ def main():
     if not args.skip_convert:
         logger.info(f"  文本转换: {convert_success}/{len(papers)} 篇成功")
     logger.info(f"{'='*80}\n")
+    logger.info("提示：未成功的条目已记录到 download_failures，可用 scripts/retry_failures.py --type download 重试。")
     
     # 显示统计信息
     stats = db.get_statistics()
