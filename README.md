@@ -156,6 +156,15 @@ python scripts/retry_failures.py --type detail
 # 将下载失败的条目重新放回TobeDownloaded队列
 python scripts/retry_failures.py --type download
 
+# 重置指定论文（可清除信息和/或删除PDF/TXT）
+python scripts/reset_paper.py --paper-id <ID> --clear-info --delete-files
+
+# 批量清空已下载内容并回退为pending
+python scripts/reset_all_downloads.py
+
+# 将downloadFailed条目降级回pendingTitles
+python scripts/requeue_download_failures.py --clear-info --delete-files
+
 # 启动网页端可视化（FastAPI）
 uvicorn web.app:app --reload
 ```

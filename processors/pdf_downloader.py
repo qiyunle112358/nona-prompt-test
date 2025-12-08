@@ -33,6 +33,8 @@ def download_pdf(
     Returns:
         是否下载成功
     """
+    download_pdf.last_error = None
+
     # 如果文件已存在，跳过下载
     if save_path.exists():
         logger.info(f"PDF already exists: {save_path.name}")
@@ -90,6 +92,7 @@ def download_pdf(
             attempts += 1
             logger.warning(str(e))
             _cleanup()
+            download_pdf.last_error = "timeout"
             if attempts >= max_attempts_on_timeout:
                 logger.warning("Download aborted after timeout retries exhausted.")
                 return False
@@ -98,14 +101,17 @@ def download_pdf(
         except ValueError as e:
             logger.warning(str(e))
             _cleanup()
+            download_pdf.last_error = "oversize"
             return False
         except requests.exceptions.RequestException as e:
             logger.error(f"Error downloading PDF from {pdf_url}: {e}")
             _cleanup()
+            download_pdf.last_error = "request"
             return False
         except Exception as e:
             logger.error(f"Unexpected error downloading PDF: {e}")
             _cleanup()
+            download_pdf.last_error = "unknown"
             return False
 
 
@@ -146,8 +152,7 @@ def batch_download_pdfs(
             if download_pdf(pdf_url, save_path, max_size_mb):
                 success_count += 1
             
-            # 避免请求过快
-            time.sleep(0.5)
+            time.sleep(3)
             
         except Exception as e:
             logger.error(f"Error processing paper {arxiv_id}: {e}")
@@ -170,4 +175,7 @@ def get_pdf_path(paper_id: str, pdf_dir: Path) -> Optional[Path]:
     """
     pdf_path = pdf_dir / f"{paper_id}.pdf"
     return pdf_path if pdf_path.exists() else None
+
+
+download_pdf.last_error = None
 

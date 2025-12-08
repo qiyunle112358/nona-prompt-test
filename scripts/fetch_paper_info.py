@@ -6,6 +6,8 @@
 import argparse
 import logging
 import sys
+import time
+import random
 from pathlib import Path
 
 # 添加项目根目录到路径
@@ -13,7 +15,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from config import DB_PATH, LOG_LEVEL, LOG_FORMAT
 from database import Database
-from fetchers import fetch_paper_info
+from fetchers import fetch_paper_info, RateLimitError
 
 # 配置日志
 logging.basicConfig(level=LOG_LEVEL, format=LOG_FORMAT)
@@ -51,38 +53,66 @@ def main():
         title = paper['title']
         
         logger.info(f"[{i}/{len(papers)}] 处理: {title}")
-        
-        try:
-            # 获取详细信息
-            info = fetch_paper_info(title)
-            
-            if info:
-                # 更新数据库
-                updates = {
-                    'arxiv_id': info.get('arxiv_id'),
-                    'pdf_url': info.get('pdf_url'),
-                    'authors': info.get('authors', []),
-                    'abstract': info.get('abstract'),
-                    'published_date': info.get('published_date'),
-                    'status': 'TobeDownloaded'
-                }
-                
-                db.update_paper_info(paper_id, updates)
-                db.remove_detail_failure(paper_id)
-                success_count += 1
-                logger.info("✓ 成功获取信息")
-            else:
-                reason = "未找到论文信息"
+
+        while True:
+            try:
+                info = fetch_paper_info(title)
+
+                if info and info.get("pdf_url"):
+                    updates = {
+                        'arxiv_id': info.get('arxiv_id'),
+                        'pdf_url': info.get('pdf_url'),
+                        'authors': info.get('authors', []),
+                        'abstract': info.get('abstract'),
+                        'published_date': info.get('published_date'),
+                        'status': 'TobeDownloaded'
+                    }
+
+                    db.update_paper_info(paper_id, updates)
+                    db.remove_detail_failure(paper_id)
+                    success_count += 1
+                    logger.info("✓ 成功获取信息")
+                    break
+
+                logger.warning("首条结果缺少PDF链接，尝试获取备用结果...")
+                fallback = fetch_paper_info(title)
+                if fallback and fallback.get("pdf_url"):
+                    updates = {
+                        'arxiv_id': fallback.get('arxiv_id'),
+                        'pdf_url': fallback.get('pdf_url'),
+                        'authors': fallback.get('authors', []),
+                        'abstract': fallback.get('abstract'),
+                        'published_date': fallback.get('published_date'),
+                        'status': 'TobeDownloaded'
+                    }
+
+                    db.update_paper_info(paper_id, updates)
+                    db.remove_detail_failure(paper_id)
+                    success_count += 1
+                    logger.info("✓ 备用结果获取成功")
+                    break
+
+                reason = "未找到包含PDF链接的详细信息"
                 logger.warning(f"✗ {reason}")
                 db.update_paper_status(paper_id, 'detailFailed')
                 db.record_detail_failure(paper_id, title, paper.get('source'), reason)
-                
-        except Exception as e:
-            reason = str(e)
-            logger.error(f"✗ 处理失败: {reason}")
-            db.update_paper_status(paper_id, 'detailFailed')
-            db.record_detail_failure(paper_id, title, paper.get('source'), reason)
-            continue
+                break
+
+            except RateLimitError as rl_err:
+                logger.warning(
+                    "arXiv 请求受到限制（status=%s），暂停60秒后重试...",
+                    rl_err.status_code,
+                )
+                time.sleep(60)
+                continue
+
+            except Exception as e:
+                reason = str(e)
+                logger.error(f"✗ 处理失败: {reason}")
+                db.update_paper_status(paper_id, 'detailFailed')
+                db.record_detail_failure(paper_id, title, paper.get('source'), reason)
+                break
+
     
     logger.info(f"\n{'='*80}")
     logger.info(f"处理完成: {success_count}/{len(papers)} 篇成功")

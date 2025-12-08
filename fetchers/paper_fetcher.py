@@ -15,6 +15,15 @@ from tqdm import tqdm
 logger = logging.getLogger(__name__)
 
 
+class RateLimitError(Exception):
+    """Raised when arXiv returns rate-limit responses."""
+
+    def __init__(self, status_code: Optional[int] = None):
+        self.status_code = status_code
+        message = f"Rate limited by arXiv (status: {status_code})" if status_code else "Rate limited by arXiv"
+        super().__init__(message)
+
+
 def fetch_paper_info(title: str, url: str = None) -> Optional[Dict]:
     """
     获取论文详细信息
@@ -80,8 +89,7 @@ def batch_fetch_papers(papers: List[Dict], show_progress: bool = True) -> List[D
                 info['source'] = paper.get('source', 'unknown')
                 results.append(info)
             
-            # 避免请求过快
-            time.sleep(0.5)
+            time.sleep(3)
             
         except Exception as e:
             logger.error(f"Error fetching paper '{title}': {e}")
@@ -96,42 +104,23 @@ def _combined_search(title: str, max_results_per_source: int = 10) -> Optional[D
     组合搜索策略：arXiv + OpenAlex
     参考Reference/tools/paper/search_openalex.py中的实现
     """
-    # 搜索arXiv和OpenAlex
     arxiv_results = _search_arxiv(title, max_results_per_source)
+    arxiv_candidates = [r for r in arxiv_results if r]
+    arxiv_with_pdf = [r for r in arxiv_candidates if r.get("pdf_url")]
+    if arxiv_with_pdf:
+        return arxiv_with_pdf[0]
+
     openalex_results = _search_openalex(title, max_results_per_source)
-    
-    # 合并结果并去重
-    all_results = []
-    seen_titles = set()
-    
-    # arXiv结果优先
-    for result in arxiv_results:
-        result_title = result.get('title', '').strip().lower()
-        if result_title and result_title not in seen_titles:
-            all_results.append(result)
-            seen_titles.add(result_title)
-    
-    # 添加OpenAlex结果
-    for result in openalex_results:
-        if result is None:
-            continue
-        result_title = result.get('title', '').strip().lower()
-        if result_title and result_title not in seen_titles:
-            all_results.append(result)
-            seen_titles.add(result_title)
-    
-    if not all_results:
-        return None
-    
-    # 查找精确匹配
-    title_lower = title.strip().lower()
-    for result in all_results:
-        result_title = result.get('title', '').strip().lower()
-        if title_lower == result_title:
-            return result
-    
-    # 如果没有精确匹配，返回第一个结果（最相关的）
-    return all_results[0]
+    openalex_candidates = [r for r in openalex_results if r]
+    openalex_with_pdf = [r for r in openalex_candidates if r.get("pdf_url")]
+    if openalex_with_pdf:
+        return openalex_with_pdf[0]
+
+    if arxiv_candidates:
+        return arxiv_candidates[0]
+    if openalex_candidates:
+        return openalex_candidates[0]
+    return None
 
 
 def _search_arxiv(title: str, max_results: int = 10) -> List[Dict]:
@@ -140,7 +129,18 @@ def _search_arxiv(title: str, max_results: int = 10) -> List[Dict]:
     参考Reference/tools/paper/search_openalex.py中的实现
     """
     base_url = "http://export.arxiv.org/api/query"
-    
+
+    def _request(params):
+        try:
+            resp = requests.get(base_url, params=params, timeout=30)
+            resp.raise_for_status()
+            return resp
+        except requests.exceptions.HTTPError as exc:
+            status = exc.response.status_code if exc.response else None
+            if status in (429, 443, 503):
+                raise RateLimitError(status) from exc
+            raise
+
     try:
         # 策略1：精确标题搜索
         query = f'ti:"{title}"'
@@ -151,31 +151,29 @@ def _search_arxiv(title: str, max_results: int = 10) -> List[Dict]:
             'sortBy': 'relevance',
             'sortOrder': 'descending'
         }
-        
-        response = requests.get(base_url, params=params, timeout=30)
-        response.raise_for_status()
-        
+
+        response = _request(params)
         results = _parse_arxiv_response(response.content)
-        
+
         if results:
             logger.info(f"Found {len(results)} results from arXiv")
             return results
-        
+
         # 策略2：关键词搜索
         keywords = re.sub(r'\b(a|an|the|and|or|of|for|in|on|at|to|with|by|from)\b', '', title.lower())
         keywords = re.sub(r'[^\w\s]', ' ', keywords)
         keywords = ' '.join(keywords.split())
-        
+
         query2 = f'all:{keywords}'
         params['search_query'] = query2
-        
-        response2 = requests.get(base_url, params=params, timeout=30)
-        response2.raise_for_status()
-        
+
+        response2 = _request(params)
         results = _parse_arxiv_response(response2.content)
         logger.info(f"Found {len(results)} results from arXiv (keywords)")
         return results
-        
+
+    except RateLimitError:
+        raise
     except Exception as e:
         logger.error(f"Error searching arXiv: {e}")
         return []

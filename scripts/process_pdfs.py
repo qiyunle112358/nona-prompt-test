@@ -6,6 +6,7 @@ PDF处理脚本
 import argparse
 import logging
 import sys
+import time
 from pathlib import Path
 
 # 添加项目根目录到路径
@@ -48,6 +49,7 @@ def main():
     # 处理每篇论文
     download_success = 0
     convert_success = 0
+    timeout_failures = 0
     
     for i, paper in enumerate(papers, 1):
         paper_id = paper['id']
@@ -77,11 +79,22 @@ def main():
                 if download_pdf(pdf_url, pdf_path):
                     download_success += 1
                     db.remove_download_failure(paper_id)
+                    timeout_failures = 0
                 else:
-                    reason = "PDF下载失败"
+                    last_error = getattr(download_pdf, "last_error", None)
+                    is_timeout = last_error == "timeout"
+                    reason = "PDF下载超时" if is_timeout else "PDF下载失败"
                     logger.warning(f"✗ {reason}")
                     db.update_paper_status(paper_id, 'downloadFailed')
                     db.record_download_failure(paper_id, title, arxiv_id, pdf_url, reason)
+                    if is_timeout:
+                        timeout_failures += 1
+                        if timeout_failures >= 3:
+                            logger.warning("连续3个PDF下载超时，暂停120秒等待arXiv恢复...")
+                            time.sleep(120)
+                            timeout_failures = 0
+                    else:
+                        timeout_failures = 0
                     continue
             
             # 转换为文本
@@ -99,6 +112,7 @@ def main():
             logger.error(f"✗ 处理失败: {reason}")
             db.update_paper_status(paper_id, 'downloadFailed')
             db.record_download_failure(paper_id, title, arxiv_id, pdf_url, reason)
+            timeout_failures = 0
             continue
     
     logger.info(f"\n{'='*80}")
