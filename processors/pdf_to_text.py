@@ -1,20 +1,18 @@
 """
 PDF转文本处理器
-使用 pdfminer3k 将 PDF 转换为文本
+优先使用 pdfplumber 提取文本，失败时回退到 PyPDF2
 """
 
-import io
 import logging
 from pathlib import Path
 from typing import Optional, List, Dict
 
+import pdfplumber
 import PyPDF2
-from pdfminer.high_level import extract_text_to_fp
-from pdfminer.layout import LAParams
 from tqdm import tqdm
 
 logger = logging.getLogger(__name__)
-_feature_warned = set()
+_feature_warned: set = set()
 
 
 def convert_pdf_to_text(
@@ -24,7 +22,7 @@ def convert_pdf_to_text(
     extract_formulas: bool = True,
 ) -> bool:
     """
-    使用 pdfminer3k 将PDF转换为文本
+    使用 pdfplumber 将PDF转换为文本，失败时回退 PyPDF2
     """
     if text_path.exists():
         logger.info("Text already exists: %s", text_path.name)
@@ -34,7 +32,7 @@ def convert_pdf_to_text(
         logger.info("Converting PDF to text: %s", pdf_path.name)
         raw_text = _extract_text(pdf_path)
         if not raw_text.strip():
-            logger.warning("pdfminer3k returned empty text for %s", pdf_path)
+            logger.warning("Primary extractor returned empty text for %s", pdf_path)
             return False
 
         cleaned_text = _clean_text(raw_text)
@@ -90,24 +88,18 @@ def batch_convert_pdfs(
 
 
 def _extract_text(pdf_path: Path) -> str:
-    output = io.StringIO()
-    laparams = LAParams(all_texts=True)
     try:
-        with open(pdf_path, "rb") as fp:
-            extract_text_to_fp(
-                fp,
-                output,
-                laparams=laparams,
-                output_type="text",
-                codec="utf-8",
-            )
-        return output.getvalue()
+        with pdfplumber.open(pdf_path) as pdf:
+            parts = []
+            for page in pdf.pages:
+                try:
+                    parts.append(page.extract_text() or "")
+                except Exception as exc:
+                    logger.debug("pdfplumber failed on page %s: %s", page.page_number, exc)
+                    continue
+            return "\n".join(parts)
     except Exception as exc:
-        logger.warning(
-            "pdfminer failed on %s (%s), falling back to PyPDF2...",
-            pdf_path.name,
-            exc,
-        )
+        logger.warning("pdfplumber failed on %s (%s), falling back to PyPDF2...", pdf_path.name, exc)
         return _extract_text_pypdf2(pdf_path)
 
 

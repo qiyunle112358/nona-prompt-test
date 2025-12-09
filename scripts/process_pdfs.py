@@ -7,6 +7,7 @@ import argparse
 import logging
 import sys
 import time
+import random
 from pathlib import Path
 
 # 添加项目根目录到路径
@@ -76,14 +77,15 @@ def main():
         try:
             # 下载PDF
             if not args.skip_download:
+                # 下载前等待，避免影响后续转换环节
+                pre_sleep = random.uniform(1.5, 2)
+                logger.info("Sleeping %.2f seconds before PDF download", pre_sleep)
+                time.sleep(pre_sleep)
+
                 if download_pdf(pdf_url, pdf_path):
                     download_success += 1
                     db.remove_download_failure(paper_id)
                     timeout_failures = 0
-                    # 成功下载后随机休眠 3~5 秒
-                    sleep_duration = random.uniform(3, 5)
-                    logger.info("Sleeping %.2f seconds after PDF download", sleep_duration)
-                    time.sleep(sleep_duration)
                 else:
                     last_error = getattr(download_pdf, "last_error", None)
                     is_timeout = last_error == "timeout"

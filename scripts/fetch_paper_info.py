@@ -112,8 +112,8 @@ def main():
                 db.update_paper_status(paper_id, 'detailFailed')
                 db.record_detail_failure(paper_id, title, paper.get('source'), reason)
                 break
-        # 每条完成后随机休眠 3~5 秒
-        sleep_duration = random.uniform(3, 5)
+        # 每条完成后随机休眠 1.3~1.5 秒
+        sleep_duration = random.uniform(1.3, 1.5)
         logger.info("Sleeping %.2f seconds after fetch to respect rate limits", sleep_duration)
         time.sleep(sleep_duration)
     
