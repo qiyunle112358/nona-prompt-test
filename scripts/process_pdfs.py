@@ -80,6 +80,10 @@ def main():
                     download_success += 1
                     db.remove_download_failure(paper_id)
                     timeout_failures = 0
+                    # 成功下载后随机休眠 3~5 秒
+                    sleep_duration = random.uniform(3, 5)
+                    logger.info("Sleeping %.2f seconds after PDF download", sleep_duration)
+                    time.sleep(sleep_duration)
                 else:
                     last_error = getattr(download_pdf, "last_error", None)
                     is_timeout = last_error == "timeout"

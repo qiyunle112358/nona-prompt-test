@@ -152,8 +152,6 @@ def batch_download_pdfs(
             if download_pdf(pdf_url, save_path, max_size_mb):
                 success_count += 1
             
-            time.sleep(3)
-            
         except Exception as e:
             logger.error(f"Error processing paper {arxiv_id}: {e}")
             continue

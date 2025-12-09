@@ -89,8 +89,6 @@ def batch_fetch_papers(papers: List[Dict], show_progress: bool = True) -> List[D
                 info['source'] = paper.get('source', 'unknown')
                 results.append(info)
             
-            time.sleep(3)
-            
         except Exception as e:
             logger.error(f"Error fetching paper '{title}': {e}")
             continue
