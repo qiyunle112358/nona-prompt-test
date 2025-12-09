@@ -77,10 +77,8 @@ def main():
         try:
             # 下载PDF
             if not args.skip_download:
-                # 下载前等待，避免影响后续转换环节
-                pre_sleep = random.uniform(1.5, 2)
-                logger.info("Sleeping %.2f seconds before PDF download", pre_sleep)
-                time.sleep(pre_sleep)
+                logger.info("Sleeping %.2f seconds before PDF download", 3)
+                time.sleep(3)
 
                 if download_pdf(pdf_url, pdf_path):
                     download_success += 1
