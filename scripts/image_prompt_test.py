@@ -776,38 +776,46 @@ def main():
     
     # 加载已处理的论文（断点续传）
     processed_arxiv_ids = set()
+    progress_file = output_dir / ".progress"
     if args.resume:
-        progress_file = output_dir / ".progress"
         if progress_file.exists():
             with open(progress_file, 'r') as f:
                 processed_arxiv_ids = set(line.strip() for line in f if line.strip())
             logger.info(f"从进度文件加载: {len(processed_arxiv_ids)} 篇论文已处理")
+            logger.info("使用 --resume 模式，跳过步骤1和步骤2，直接进入步骤3")
+        else:
+            logger.warning("进度文件不存在，将执行完整流程")
     
-    # 步骤1: 收集论文
-    logger.info("\n" + "="*80)
-    logger.info("步骤1: 收集论文标题")
-    logger.info("="*80)
-    collect_papers_from_multiple_categories(db, args.max_papers, args.year)
-    
-    # 步骤2: 获取论文详细信息
-    logger.info("\n" + "="*80)
-    logger.info("步骤2: 获取论文详细信息")
-    logger.info("="*80)
-    
-    pending_papers = db.get_papers_by_status('pendingTitles', limit=args.max_papers)
-    if pending_papers:
-        from fetchers import fetch_paper_info
-        for i, paper in enumerate(pending_papers, 1):
-            logger.info(f"获取论文信息 {i}/{len(pending_papers)}: {paper['title'][:50]}...")
-            info = fetch_paper_info(paper['title'])
-            if info:
-                db.update_paper_info(paper['id'], {
-                    'arxiv_id': info.get('arxiv_id'),
-                    'pdf_url': info.get('pdf_url'),
-                    'authors': info.get('authors', []),
-                    'abstract': info.get('abstract'),
-                    'status': 'TobeDownloaded'
-                })
+    # 步骤1: 收集论文（如果使用resume且已有足够论文，则跳过）
+    if not args.resume or len(processed_arxiv_ids) == 0:
+        logger.info("\n" + "="*80)
+        logger.info("步骤1: 收集论文标题")
+        logger.info("="*80)
+        collect_papers_from_multiple_categories(db, args.max_papers, args.year)
+        
+        # 步骤2: 获取论文详细信息
+        logger.info("\n" + "="*80)
+        logger.info("步骤2: 获取论文详细信息")
+        logger.info("="*80)
+        
+        pending_papers = db.get_papers_by_status('pendingTitles', limit=args.max_papers)
+        if pending_papers:
+            from fetchers import fetch_paper_info
+            for i, paper in enumerate(pending_papers, 1):
+                logger.info(f"获取论文信息 {i}/{len(pending_papers)}: {paper['title'][:50]}...")
+                info = fetch_paper_info(paper['title'])
+                if info:
+                    db.update_paper_info(paper['id'], {
+                        'arxiv_id': info.get('arxiv_id'),
+                        'pdf_url': info.get('pdf_url'),
+                        'authors': info.get('authors', []),
+                        'abstract': info.get('abstract'),
+                        'status': 'TobeDownloaded'
+                    })
+    else:
+        logger.info("\n" + "="*80)
+        logger.info("步骤1和步骤2: 已跳过（使用 --resume 模式）")
+        logger.info("="*80)
     
     # 步骤3: 下载PDF并提取流程图
     logger.info("\n" + "="*80)
@@ -971,6 +979,10 @@ def main():
             images_collected += 1
             logger.info(f"✓ 成功处理第 {images_collected}/{args.num_images} 张流程图 "
                       f"(最佳相似度: {similarity_scores[0]['weighted_score']:.3f})")
+            
+            # 保存进度
+            with open(progress_file, 'a') as f:
+                f.write(f"{arxiv_id}\n")
         else:
             logger.warning(f"  所有图片生成失败，跳过")
     
