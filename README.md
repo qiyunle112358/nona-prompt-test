@@ -1,225 +1,239 @@
-# 具身智能论文Survey工具
+# Nona - 论文图片Prompt测试工具
 
-自动收集、处理和筛选具身智能领域论文的Python工具。
+自动化批量下载论文、提取流程图、生成Prompt并重新生成图片，用于测试和优化图片生成模型的预制Prompt。
 
-## 功能
+## ✨ 功能特性
 
-- 从NeurIPS、ICLR、ICML、CoRL、RSS、ICRA、IROS和arXiv收集论文
-- 获取论文详细信息（arXiv ID、PDF链接等）
-- 下载PDF并转换为文本
-- 使用LLM分析论文相关性并生成总结
+- 📚 **多领域论文收集**：从12个不同arXiv分类自动收集论文（计算机视觉、NLP、机器学习、AI等）
+- 🔍 **智能图片提取**：基于关键词搜索，自动提取论文中的流程图/架构图/演示图
+- 🤖 **AI Prompt生成**：使用OpenRouter API（google/gemini-2.5-flash）分析图片，生成5个不同的详细Prompt
+- 🎨 **图片重新生成**：使用OpenRouter API（google/gemini-3-pro-image-preview）根据每个Prompt生成新图片
+- 📊 **结构化输出**：每张原图及其对应的5个Prompt和5张生成图片整理在一起，方便对比
 
-## 安装
+## 🚀 快速开始
+
+### 1. 安装依赖
 
 ```bash
-git clone https://github.com/jyozhou/nona.git
-cd nona
+git clone https://github.com/qiyunle112358/nona-prompt-test.git
+cd nona-prompt-test
 pip install -r requirements.txt
 ```
 
-## 配置
+### 2. 配置API密钥
 
-1. 复制配置文件：
+复制配置文件并填入你的OpenRouter API Key：
+
 ```bash
 cp env.example .env
 ```
 
-2. 编辑 `.env`，配置LLM API：
+编辑 `.env` 文件：
+
 ```bash
-DEFAULT_LLM_PROVIDER=custom
-LLM_API_KEY=your-api-key-here
+# 使用OpenRouter API
+LLM_API_KEY=sk-or-v1-your-key-here
 LLM_BASE_URL=https://openrouter.ai/api/v1
 LLM_MODEL=deepseek/deepseek-chat
 ```
 
-支持的服务：OpenRouter、DeepSeek、Gemini、智谱AI、硅基流动、OpenAI等。详见 `env.example`。
+获取API Key：https://openrouter.ai/keys
 
-3. 测试配置：
+### 3. 运行测试
+
 ```bash
-python tests/test_llm_config.py
+# 测试2张图（推荐先用小数量测试）
+python scripts/image_prompt_test.py \
+    --num-images 2 \
+    --year 2024 \
+    --num-prompts 5 \
+    --openrouter-api-key YOUR_API_KEY \
+    --output-dir data/prompt_test
+
+# 完整运行（100张图）
+python scripts/image_prompt_test.py \
+    --num-images 100 \
+    --year 2024 \
+    --num-prompts 5 \
+    --openrouter-api-key YOUR_API_KEY \
+    --output-dir data/prompt_test \
+    --max-papers 500
 ```
 
-## 使用方法
+## 📖 详细使用说明
 
-### 1. 收集论文标题
+### 参数说明
 
-```bash
-# 基本格式
-python scripts/collect_titles.py --source <来源> --year <年份>
+- `--num-images`: 要收集的流程图数量（默认100）
+- `--year`: 论文年份（默认2024）
+- `--num-prompts`: 每个原图生成的prompt数量（默认5）
+- `--openrouter-api-key`: **必需**，OpenRouter API密钥
+- `--output-dir`: 输出目录（默认 `data/prompt_test`）
+- `--max-papers`: 最多处理的论文数量（默认500，用于确保能找到足够的流程图）
 
-# 收集各会议论文
-python scripts/collect_titles.py --source neurips --year 2024
-python scripts/collect_titles.py --source iclr --year 2025
-python scripts/collect_titles.py --source icml --year 2024
-python scripts/collect_titles.py --source corl --year 2024
-python scripts/collect_titles.py --source rss --year 2024
-python scripts/collect_titles.py --source icra --year 2024
-python scripts/collect_titles.py --source iros --year 2024
+### 工作流程
 
-# 收集arXiv论文（可指定分类(默认RO)和最大数量）
-python scripts/collect_titles.py --source arxiv --year 2025 --max-results 3000
-python scripts/collect_titles.py --source arxiv --year 2025 --arxiv-category cs.AI --max-results 8000
+1. **收集论文**：从12个不同领域随机收集指定年份的论文
+2. **获取信息**：获取论文的arXiv ID、PDF下载链接等
+3. **下载PDF**：下载所有论文的PDF文件
+4. **提取流程图**：
+   - 在PDF全文中搜索关键词（Figure, workflow, Architecture Diagram, Flowchart等）
+   - 提取关键词所在页面的图片
+   - 如果论文中没有找到关键词，自动跳过并继续处理下一篇
+5. **生成Prompt**：使用 `google/gemini-2.5-flash` 分析每张流程图，生成5个不同的详细Prompt
+6. **生成图片**：使用 `google/gemini-3-pro-image-preview` 根据每个Prompt生成图片
+7. **整理输出**：将所有结果整理到结构化文件夹中
 
-# 收集所有来源
-python scripts/collect_titles.py --source all --year 2024 --max-results 6000
+### 输出结构
+
+```
+data/prompt_test/
+└── results/
+    ├── <arxiv_id_1>/
+    │   ├── original.png          # 原图
+    │   ├── generated_1.png       # Prompt 1生成的图片
+    │   ├── generated_2.png       # Prompt 2生成的图片
+    │   ├── generated_3.png       # Prompt 3生成的图片
+    │   ├── generated_4.png       # Prompt 4生成的图片
+    │   ├── generated_5.png       # Prompt 5生成的图片
+    │   └── prompts.txt           # 所有5个prompt文本
+    └── <arxiv_id_2>/
+        └── ...
 ```
 
-**参数说明**：
-- `--source`: 论文来源，可选值：`arxiv`, `neurips`, `iclr`, `icml`, `corl`, `rss`, `icra`, `iros`, `all`（默认：`all`）
-- `--year`: 年份（默认：`2024`）
-- `--arxiv-category`: arXiv分类，仅对`arxiv`有效（默认：`cs.RO`），常见分类：`cs.RO`, `cs.AI`, `cs.CV`, `cs.LG`, `cs.CL`
-- `--max-results`: arXiv最大抓取数量（默认 `5000`，单批次最多 `1000`，脚本会自动分页）
+## 🔧 核心功能
 
-### 2. 获取论文详细信息
+### 图片提取逻辑
+
+程序会搜索以下关键词来定位流程图/演示图：
+
+**英文关键词**：
+- `Figure`, `workflow`, `Architecture Diagram`, `Flowchart`
+- `Experimental Design`, `Technical Roadmap`
+
+**中文关键词**：
+- `流程图`, `技术路线`, `框架图`, `实验设计`
+- `示意图`, `工作流程`, `架构图`
+
+如果论文中没有找到这些关键词，程序会自动跳过该论文，继续处理下一篇。
+
+### Prompt生成
+
+- **模型**：`google/gemini-2.5-flash`
+- **功能**：分析图片并生成详细的、可用于重新生成相似图片的Prompt
+- **数量**：每张原图生成5个不同的Prompt
+
+### 图片生成
+
+- **模型**：`google/gemini-3-pro-image-preview`
+- **前置Prompt**：使用科学插图专家的预设Prompt，确保生成高质量的学术可视化图片
+- **输出**：每个Prompt生成一张图片
+
+## 📚 其他功能
+
+### 批量下载论文
+
+除了图片Prompt测试，这个工具还支持批量下载论文：
 
 ```bash
-# 获取待处理论文的详细信息（ArxivID、PDF下载url等）
-python scripts/fetch_paper_info.py
+# 收集论文标题
+python scripts/collect_titles.py --source arxiv --year 2024 --arxiv-category cs.CV --max-results 1000
 
-# 限制处理数量
+# 获取论文信息
 python scripts/fetch_paper_info.py --limit 100
 
-# 处理指定状态的论文
-python scripts/fetch_paper_info.py --status pendingTitles --limit 50
-```
-
-**参数说明**：
-- `--limit`: 处理数量限制（可选，不指定则处理所有）
-- `--status`: 要处理的论文状态（默认：`pendingTitles`），可选值：`pendingTitles`, `TobeDownloaded`, `processed`, `analyzed`
-
-### 3. 处理PDF文件
-
-```bash
-# 下载并处理PDF
-python scripts/process_pdfs.py
-
-# 限制处理数量
+# 下载PDF
 python scripts/process_pdfs.py --limit 50
-
-# 只下载PDF，不进行文本转换
-python scripts/process_pdfs.py --skip-convert --limit 100
-
-# 只进行文本转换，跳过下载（适用于已下载的PDF）
-python scripts/process_pdfs.py --skip-download
-
 ```
 
-**参数说明**：
-- `--limit`: 处理数量限制（可选）
-- `--status`: 要处理的论文状态（默认：`TobeDownloaded`）
-- `--skip-download`: 跳过下载步骤，只进行文本转换
-- `--skip-convert`: 跳过文本转换步骤，只进行下载
+详细使用方法请查看：
+- `快速开始-批量下载论文.md` - 批量下载论文的快速指南
+- `使用指南.md` - 完整功能使用说明
 
-**注释**：
-- corl、iclr、icml、icra、iros等会议第一篇文章下载失败是正常现象，在dblp爬取会议接收文章标题列表时获取到的第一个标题是当年会议记录出版信息
-- 获取详情失败的标题会被保存到`detail_failures`表，PDF下载失败的记录会被保存到`download_failures`表，可通过 `scripts/retry_failures.py` 重新入队
-- 在海量数据里存在一定比例的详情获取/下载失败是正常情况，脚本会自动跳过并记录到上述失败列表中，整体任务仍会继续执行
-
-### 4. AI分析和筛选
+### 清理数据
 
 ```bash
-# 分析论文相关性
-python scripts/analyze_papers.py
+# 清理测试数据
+python scripts/cleanup_data.py
 
-# 使用特定的LLM提供商
-python scripts/analyze_papers.py --provider custom
-python scripts/analyze_papers.py --provider openai
-python scripts/analyze_papers.py --provider anthropic
-
-# 限制处理数量
-python scripts/analyze_papers.py --limit 20
-
-# 设置最小相关性分数阈值（0.0-1.0）
-python scripts/analyze_papers.py --min-score 0.7 --limit 20
-
-# 处理指定状态的论文
-python scripts/analyze_papers.py --status processed --limit 50
-```
-
-**参数说明**：
-- `--limit`: 处理数量限制（可选）
-- `--status`: 要处理的论文状态（默认：`processed`）
-- `--provider`: LLM提供商，可选值：`custom`, `openai`, `anthropic`（默认：`.env`中配置的`DEFAULT_LLM_PROVIDER`）
-- `--min-score`: 最小相关性分数阈值（默认：`0.5`），只有分数≥此值的论文才会被标记为相关
-
-### 5. 辅助操作
-```
-# 删除数据库与全部pdf、txt文本（谨慎操作）
+# 清空所有数据（谨慎操作）
 python scripts/clean_data.py
-
-# 检查当前数据库情况
-python scripts/quick_verify.py
-
-# 将获取详情失败的条目重新放回pendingTitles队列
-python scripts/retry_failures.py --type detail
-
-# 将下载失败的条目重新放回TobeDownloaded队列
-python scripts/retry_failures.py --type download
-
-# 重置指定论文（可清除信息和/或删除PDF/TXT）
-python scripts/reset_paper.py --paper-id <ID> --clear-info --delete-files
-
-# 批量清空已下载内容并回退为pending
-python scripts/reset_all_downloads.py
-
-# 将downloadFailed条目降级回pendingTitles
-python scripts/requeue_download_failures.py --clear-info --delete-files
-
-# 启动网页端可视化（FastAPI）
-uvicorn web.app:app --reload
 ```
 
+## 📋 项目结构
 
-## 完整工作流示例
+```
+nona/
+├── collectors/          # 论文收集器（arXiv、NeurIPS、ICLR等）
+├── fetchers/           # 论文信息获取
+├── processors/         # PDF处理和图片提取
+├── analyzers/          # AI分析（可选）
+├── scripts/            # 命令行脚本
+│   ├── image_prompt_test.py  # 图片Prompt测试主程序
+│   ├── collect_titles.py     # 收集论文标题
+│   ├── fetch_paper_info.py   # 获取论文信息
+│   └── process_pdfs.py       # 处理PDF
+├── web/                # Web可视化界面
+├── config.py           # 配置文件
+├── database.py         # 数据库操作
+└── requirements.txt    # 依赖列表
+```
+
+## ⚙️ 配置说明
+
+### OpenRouter API配置
+
+推荐使用OpenRouter，支持多个模型且性价比高：
+
+1. 访问 https://openrouter.ai/keys 获取API Key
+2. 在 `.env` 文件中配置：
 
 ```bash
-# 1. 收集论文标题
-python scripts/collect_titles.py --source arxiv --year 2025
-
-# 2. 获取论文信息（限制100篇避免API超额）
-python scripts/fetch_paper_info.py --limit 100
-
-# 3. 下载并处理PDF（限制50篇节省空间和时间）
-python scripts/process_pdfs.py --limit 50
-
-# 4. AI分析论文相关性（限制20篇控制成本）
-python scripts/analyze_papers.py --limit 20
+LLM_API_KEY=sk-or-v1-your-key-here
+LLM_BASE_URL=https://openrouter.ai/api/v1
 ```
 
-## 数据
+### 支持的模型
 
-所有数据保存在 `data/papers.db` 数据库中。
+- **图生文**：`google/gemini-2.5-flash`
+- **文生图**：`google/gemini-3-pro-image-preview`
 
-**论文状态流程**：
-```
-pendingTitles → TobeDownloaded → processed → analyzed
-```
+## 📝 注意事项
 
-### Web 可视化功能
+1. **API费用**：处理大量图片需要调用大量API，注意控制成本
+2. **处理时间**：完整流程可能需要数小时，建议先用小数量测试
+3. **存储空间**：确保有足够的磁盘空间（每张图片约几MB）
+4. **网络连接**：需要稳定的网络连接下载论文和调用API
 
-- 首页按状态折叠展示论文标题列表，可展开查看
-- 点击某篇论文可在浏览器中查看 PDF 预览、文本片段、相关性评分与总结
-- 运行 `uvicorn web.app:app --reload`（默认 http://127.0.0.1:8000）即可打开界面
+## 🐛 故障排除
 
-**查询相关论文**：
-```sql
-SELECT p.title, a.relevance_score, a.reasoning, a.summary
-FROM papers p
-JOIN analysis_results a ON p.id = a.paper_id
-WHERE a.is_relevant = 1
-ORDER BY a.relevance_score DESC;
-```
+### 问题1: 找不到足够的流程图
 
-## 自定义
+**解决**：增加 `--max-papers` 参数，处理更多论文
 
-编辑 `config.py` 中的 `RELEVANCE_TAGS` 列表来自定义筛选主题：
+### 问题2: API调用失败
 
-```python
-RELEVANCE_TAGS = [
-    "机器人",
-    "具身智能",
-    "灵巧手",
-    # 添加你的关键词
-]
-```
+**解决**：
+- 检查API密钥是否正确
+- 检查网络连接
+- 查看日志了解具体错误
 
+### 问题3: Prompt解析错误
+
+**解决**：程序已自动过滤总指令文本，如果仍有问题，请查看日志
+
+## 📄 许可证
+
+本项目采用 MIT 许可证。
+
+## 🤝 贡献
+
+欢迎提交Issue和Pull Request！
+
+## 📞 联系方式
+
+如有问题或建议，请提交Issue。
+
+---
+
+**开始测试你的Prompt吧！** 🚀

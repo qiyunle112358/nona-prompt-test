@@ -1,5 +1,44 @@
+# Python
 __pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
 venv/
+env/
+ENV/
+
+# 环境变量和配置
 .env
+*.env.local
+
+# 数据文件（不提交到仓库）
 data/
+*.db
+*.sqlite
+
+# 测试临时文件
 tests/temp/
+.pytest_cache/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# 系统文件
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+Thumbs.db
+
+# 日志文件
+*.log
+
+# 临时文件
+*.tmp
+*.temp
