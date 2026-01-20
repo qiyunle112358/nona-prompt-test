@@ -55,7 +55,12 @@ def download_pdf(
             max_size = max_size_mb * 1024 * 1024
             downloaded_bytes = 0
 
-            with requests.get(pdf_url, stream=True, timeout=10) as response:
+            # 明确禁用代理
+            proxies = {
+                'http': None,
+                'https': None
+            }
+            with requests.get(pdf_url, stream=True, timeout=10, proxies=proxies) as response:
                 response.raise_for_status()
 
                 content_type = response.headers.get('Content-Type', '')
