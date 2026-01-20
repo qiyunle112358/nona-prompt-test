@@ -117,8 +117,8 @@ class OpenRouterClient:
             mime_type = mime_types.get(ext, 'image/png')
             image_url = f"data:{mime_type};base64,{image_base64}"
             
-            # 构建prompt，要求生成非常详细的prompt
-            prompt_text = f"""Analyze this scientific/academic diagram/flowchart image and generate exactly {num_prompts} different extremely detailed prompts that could be used to recreate an image as identical as possible to the original.
+            # 构建prompt，要求生成超级详细、超长的prompt
+            prompt_text = f"""Analyze this scientific/academic diagram/flowchart image with EXTREME attention to detail and generate exactly {num_prompts} different ULTRA-DETAILED prompts that could be used to recreate an image as IDENTICAL as possible to the original.
 
 CRITICAL REQUIREMENTS:
 - Return ONLY the {num_prompts} prompts, nothing else
@@ -126,27 +126,109 @@ CRITICAL REQUIREMENTS:
 - Do NOT include any introductory text like "Here are...", "The following...", etc.
 - Each prompt should be on a separate line, numbered as "1.", "2.", "3.", etc.
 - Use a blank line between each prompt for clarity
+- PROMPT LENGTH: Each prompt should be EXTREMELY LONG (500-2000+ words) - describe EVERY SINGLE DETAIL
 
-Each prompt MUST be extremely detailed and describe EVERY aspect of the image:
-1. **Layout and Structure**: Exact positioning, arrangement, alignment of all elements
-2. **Visual Elements**: Every shape, box, circle, arrow, line, connector - their exact positions, sizes, orientations
-3. **Text and Labels**: All text content, labels, annotations, their exact positions and fonts
-4. **Colors**: Exact color scheme for each element (use specific color names or hex codes)
-5. **Connections**: All arrows, lines, connections between elements - their directions, styles, endpoints
-6. **Styling**: Line thickness, border styles, fill patterns, shadows, gradients
-7. **Spacing**: Exact distances, margins, padding between elements
-8. **Background**: Background color, patterns, or transparency
-9. **Typography**: Font sizes, weights, styles for all text elements
-10. **Overall Style**: Scientific diagram style, academic paper style, etc.
+Each prompt MUST be ULTRA-DETAILED and describe ABSOLUTELY EVERY aspect of the image in extreme detail:
 
-The goal is to create prompts so detailed that the generated image will be as identical as possible to the original image. Describe every single detail you can observe.
+1. **Layout and Structure** (describe in detail):
+   - Exact positioning of every element (coordinates, alignment, relative positions)
+   - Overall layout structure (grid, hierarchical, flow, etc.)
+   - Spacing between all elements (exact distances in pixels or relative units)
+   - Margins and padding for every component
+   - Alignment of all elements (left, right, center, justified)
+
+2. **Visual Elements** (describe EVERY element):
+   - Every shape, box, circle, rectangle, polygon - their exact positions, sizes, dimensions
+   - Every arrow, line, connector - their exact paths, start/end points, curves, angles
+   - Every icon, symbol, graphic element - their exact appearance and position
+   - Exact sizes of all elements (width, height in pixels or relative units)
+   - Exact orientations and rotations of all elements
+
+3. **Text and Labels** (describe EVERY text element):
+   - ALL text content - every word, number, symbol, character
+   - Exact positions of all text elements
+   - Font family, size, weight, style for each text element
+   - Text alignment and justification
+   - Text colors for each element
+   - Text background colors or highlights
+   - Text spacing (letter-spacing, line-height)
+
+4. **Colors** (describe EVERY color):
+   - Exact color for every element (use specific color names or hex codes like #FF5733)
+   - Fill colors for all shapes
+   - Border/outline colors for all elements
+   - Text colors for all labels
+   - Background colors for different regions
+   - Gradient colors (if any) with exact color stops
+   - Transparency/opacity values for each element
+
+5. **Connections and Relationships** (describe EVERY connection):
+   - Every arrow, line, connector - their exact paths
+   - Start and end points of all connections
+   - Connection styles (solid, dashed, dotted, etc.)
+   - Arrow styles (arrowhead shape, size, direction)
+   - Line thickness for each connection
+   - Curvature and angles of all curved connections
+   - Which elements connect to which (exact relationships)
+
+6. **Styling Details** (describe EVERY style):
+   - Line thickness for every line, border, outline
+   - Border styles (solid, dashed, dotted, double, etc.)
+   - Fill patterns (solid, gradient, pattern, texture)
+   - Shadow effects (if any) - offset, blur, color, opacity
+   - Gradient effects - direction, colors, stops
+   - Rounded corners - exact radius for each element
+   - 3D effects, depth, perspective (if any)
+
+7. **Spacing and Dimensions** (exact measurements):
+   - Exact distances between all elements
+   - Margins around every component
+   - Padding inside every container
+   - Overall dimensions of the entire diagram
+   - Aspect ratios of all elements
+
+8. **Background** (detailed description):
+   - Background color or pattern
+   - Background texture or gradient
+   - Transparency level
+   - Any background images or watermarks
+
+9. **Typography** (for EVERY text element):
+   - Font family (Arial, Times, Helvetica, etc.)
+   - Font size (exact point size or pixels)
+   - Font weight (normal, bold, light, etc.)
+   - Font style (normal, italic, oblique)
+   - Text decoration (underline, strikethrough, etc.)
+   - Text transform (uppercase, lowercase, capitalize)
+
+10. **Overall Style and Context**:
+    - Scientific diagram style characteristics
+    - Academic paper style conventions
+    - Visual hierarchy and emphasis
+    - Color scheme and palette
+    - Overall aesthetic and design principles
+
+11. **Additional Details**:
+    - Any annotations, callouts, or notes
+    - Any legends, keys, or explanatory elements
+    - Any grid lines, guides, or reference elements
+    - Any decorative elements or embellishments
+    - Any data visualizations (charts, graphs) embedded in the diagram
+
+IMPORTANT: 
+- Be EXTREMELY VERBOSE - describe every single pixel-level detail you can observe
+- Use precise measurements and coordinates when possible
+- Mention every color, every shape, every text element
+- Describe relationships and connections in detail
+- The prompt should be LONG (500-2000+ words per prompt) - don't worry about length
+- The goal is to create prompts so detailed that the generated image will be pixel-perfect identical to the original
 
 Format:
-1. [First extremely detailed prompt]
-2. [Second extremely detailed prompt]
-3. [Third extremely detailed prompt]
-4. [Fourth extremely detailed prompt]
-5. [Fifth extremely detailed prompt]"""
+1. [First ULTRA-DETAILED prompt - 500-2000+ words describing every detail]
+2. [Second ULTRA-DETAILED prompt - 500-2000+ words describing every detail]
+3. [Third ULTRA-DETAILED prompt - 500-2000+ words describing every detail]
+4. [Fourth ULTRA-DETAILED prompt - 500-2000+ words describing every detail]
+5. [Fifth ULTRA-DETAILED prompt - 500-2000+ words describing every detail]"""
 
             url = f"{self.base_url}/chat/completions"
             payload = {
@@ -593,7 +675,7 @@ class FlowchartExtractor:
     
     def extract_image_near_keyword(self, doc, page_num: int, keyword: str) -> Optional[Path]:
         """
-        提取关键词所在页面附近的图片
+        基于坐标定位提取关键词附近的图片（改进版）
         
         Args:
             doc: PDF文档对象
@@ -605,44 +687,141 @@ class FlowchartExtractor:
         """
         try:
             page = doc[page_num]
+            
+            # 1. 获取关键词在页面上的位置（坐标）
+            keyword_instances = page.search_for(keyword)
+            
+            if not keyword_instances:
+                logger.debug(f"页面{page_num+1}上未找到关键词'{keyword}'的坐标位置")
+                # 降级到原来的方法：提取页面第一张符合条件的图片
+                return self._extract_first_valid_image(doc, page_num, keyword)
+            
+            # 2. 获取页面上所有图片及其位置
+            image_list = page.get_images()
+            if not image_list:
+                return None
+            
+            image_rects = []
+            for img_index, img in enumerate(image_list):
+                xref = img[0]
+                try:
+                    # 获取图片在页面上的位置（矩形区域）
+                    img_rects = page.get_image_rects(xref)
+                    for rect in img_rects:
+                        image_rects.append({
+                            'rect': rect,
+                            'index': img_index,
+                            'xref': xref
+                        })
+                except Exception as e:
+                    logger.debug(f"无法获取图片{img_index}的位置: {e}")
+                    continue
+            
+            if not image_rects:
+                logger.debug(f"页面{page_num+1}上未找到图片位置信息")
+                # 降级到原来的方法
+                return self._extract_first_valid_image(doc, page_num, keyword)
+            
+            # 3. 找到距离关键词最近的图片
+            best_image = None
+            min_distance = float('inf')
+            
+            for keyword_rect in keyword_instances:
+                keyword_center = (
+                    (keyword_rect.x0 + keyword_rect.x1) / 2,
+                    (keyword_rect.y0 + keyword_rect.y1) / 2
+                )
+                
+                for img_info in image_rects:
+                    img_rect = img_info['rect']
+                    img_center = (
+                        (img_rect.x0 + img_rect.x1) / 2,
+                        (img_rect.y0 + img_rect.y1) / 2
+                    )
+                    
+                    # 计算欧氏距离
+                    distance = ((keyword_center[0] - img_center[0])**2 + 
+                               (keyword_center[1] - img_center[1])**2)**0.5
+                    
+                    if distance < min_distance:
+                        min_distance = distance
+                        best_image = img_info
+            
+            # 4. 提取最近的图片（距离阈值：1000像素，约等于页面高度的1.5倍）
+            if best_image and min_distance < 1000:
+                try:
+                    base_image = doc.extract_image(best_image['xref'])
+                    image_bytes = base_image["image"]
+                    image_ext = base_image["ext"]
+                    
+                    filename = f"diagram_page_{page_num}_img_{best_image['index']}.{image_ext}"
+                    image_path = self.output_dir / filename
+                    
+                    with open(image_path, "wb") as img_file:
+                        img_file.write(image_bytes)
+                    
+                    # 检查图片尺寸
+                    try:
+                        img_pil = Image.open(image_path)
+                        width, height = img_pil.size
+                        if width >= 200 and height >= 200:
+                            logger.info(f"提取图片: {filename} (关键词: {keyword}, 页面: {page_num+1}, 距离: {min_distance:.1f}px)")
+                            return image_path
+                        else:
+                            image_path.unlink()
+                    except Exception:
+                        if image_path.exists():
+                            image_path.unlink()
+                except Exception as e:
+                    logger.warning(f"提取最近图片时出错: {e}")
+            
+            # 如果基于坐标的方法失败，降级到原来的方法
+            logger.debug(f"基于坐标定位失败，使用降级方法")
+            return self._extract_first_valid_image(doc, page_num, keyword)
+            
+        except Exception as e:
+            logger.error(f"提取图片时出错 (页面{page_num+1}): {e}")
+            # 降级到原来的方法
+            return self._extract_first_valid_image(doc, page_num, keyword)
+    
+    def _extract_first_valid_image(self, doc, page_num: int, keyword: str) -> Optional[Path]:
+        """
+        降级方法：提取页面第一张符合条件的图片（原来的实现）
+        """
+        try:
+            page = doc[page_num]
             image_list = page.get_images()
             
             if not image_list:
                 return None
             
-            # 提取该页面的所有图片
             for img_index, img in enumerate(image_list):
                 xref = img[0]
                 base_image = doc.extract_image(xref)
                 image_bytes = base_image["image"]
                 image_ext = base_image["ext"]
                 
-                # 保存图片
                 filename = f"diagram_page_{page_num}_img_{img_index}.{image_ext}"
                 image_path = self.output_dir / filename
                 
                 with open(image_path, "wb") as img_file:
                     img_file.write(image_bytes)
                 
-                # 基本检查：排除太小的图片
                 try:
                     img_pil = Image.open(image_path)
                     width, height = img_pil.size
-                    if width >= 200 and height >= 200:  # 至少200x200像素
-                        logger.info(f"提取图片: {filename} (关键词: {keyword}, 页面: {page_num+1})")
+                    if width >= 200 and height >= 200:
+                        logger.info(f"提取图片: {filename} (关键词: {keyword}, 页面: {page_num+1}, 降级方法)")
                         return image_path
                     else:
-                        # 删除太小的图片
                         image_path.unlink()
                 except Exception:
-                    # 如果无法打开图片，也删除
                     if image_path.exists():
                         image_path.unlink()
             
             return None
-            
         except Exception as e:
-            logger.error(f"提取图片时出错 (页面{page_num+1}): {e}")
+            logger.error(f"降级方法提取图片时出错: {e}")
             return None
     
     def extract_flowchart(self) -> Optional[Path]:

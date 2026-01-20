@@ -5,12 +5,19 @@ PDF下载器
 
 import logging
 import requests
+import os
 from pathlib import Path
 from typing import Optional, List, Dict
 from tqdm import tqdm
 import time
 
 logger = logging.getLogger(__name__)
+
+# 禁用代理（在模块级别）
+os.environ.pop('http_proxy', None)
+os.environ.pop('https_proxy', None)
+os.environ.pop('HTTP_PROXY', None)
+os.environ.pop('HTTPS_PROXY', None)
 
 
 def download_pdf(
