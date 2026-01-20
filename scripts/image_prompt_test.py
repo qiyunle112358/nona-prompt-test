@@ -961,12 +961,24 @@ def main():
             with open(progress_file, 'r') as f:
                 processed_arxiv_ids = set(line.strip() for line in f if line.strip())
             logger.info(f"从进度文件加载: {len(processed_arxiv_ids)} 篇论文已处理")
-            logger.info("使用 --resume 模式，跳过步骤1和步骤2，直接进入步骤3")
+        
+        # 检查是否需要收集更多论文
+        to_download_count = len(db.get_papers_by_status('TobeDownloaded', limit=1000))
+        pending_count = len(db.get_papers_by_status('pendingTitles', limit=1000))
+        total_available = to_download_count + pending_count
+        
+        if total_available < (args.num_images - len(processed_arxiv_ids)):
+            logger.warning(f"可用论文数 ({total_available}) 可能不足以达到目标 ({args.num_images - len(processed_arxiv_ids)} 张)，将执行步骤1和步骤2收集更多论文")
+            # 需要收集更多论文
+            need_more_papers = True
         else:
-            logger.warning("进度文件不存在，将执行完整流程")
+            logger.info("使用 --resume 模式，跳过步骤1和步骤2，直接进入步骤3")
+            need_more_papers = False
+    else:
+        need_more_papers = True
     
-    # 步骤1: 收集论文（如果使用resume且已有足够论文，则跳过）
-    if not args.resume or len(processed_arxiv_ids) == 0:
+    # 步骤1: 收集论文（如果需要）
+    if need_more_papers:
         logger.info("\n" + "="*80)
         logger.info("步骤1: 收集论文标题")
         logger.info("="*80)
@@ -993,7 +1005,7 @@ def main():
                     })
     else:
         logger.info("\n" + "="*80)
-        logger.info("步骤1和步骤2: 已跳过（使用 --resume 模式）")
+        logger.info("步骤1和步骤2: 已跳过（使用 --resume 模式，有足够的待处理论文）")
         logger.info("="*80)
     
     # 步骤3: 下载PDF并提取流程图
@@ -1006,9 +1018,32 @@ def main():
         logger.warning("没有待下载的论文")
         # 如果使用resume且已有进度，检查是否需要继续收集论文
         if args.resume and len(processed_arxiv_ids) > 0 and len(processed_arxiv_ids) < args.num_images:
-            logger.info(f"当前已处理 {len(processed_arxiv_ids)} 张图，目标 {args.num_images} 张，但数据库中没有更多待处理论文")
-            logger.info("建议：重新运行脚本（不使用--resume）以收集更多论文")
-        return
+            logger.warning(f"当前已处理 {len(processed_arxiv_ids)} 张图，目标 {args.num_images} 张，但数据库中没有更多待处理论文")
+            logger.info("将自动执行步骤1和步骤2以收集更多论文...")
+            # 自动收集更多论文
+            collect_papers_from_multiple_categories(db, args.max_papers, args.year)
+            pending_papers = db.get_papers_by_status('pendingTitles', limit=args.max_papers)
+            if pending_papers:
+                from fetchers import fetch_paper_info
+                logger.info(f"获取 {len(pending_papers)} 篇论文的详细信息...")
+                for i, paper in enumerate(pending_papers, 1):
+                    logger.info(f"获取论文信息 {i}/{len(pending_papers)}: {paper['title'][:50]}...")
+                    info = fetch_paper_info(paper['title'])
+                    if info:
+                        db.update_paper_info(paper['id'], {
+                            'arxiv_id': info.get('arxiv_id'),
+                            'pdf_url': info.get('pdf_url'),
+                            'authors': info.get('authors', []),
+                            'abstract': info.get('abstract'),
+                            'status': 'TobeDownloaded'
+                        })
+            # 重新获取待下载论文
+            to_download_papers = db.get_papers_by_status('TobeDownloaded', limit=args.max_papers)
+            if not to_download_papers:
+                logger.error("收集论文后仍然没有待下载的论文，退出")
+                return
+        else:
+            return
     
     results = []
     # 从已处理的论文数开始计数（断点续传）
@@ -1019,6 +1054,39 @@ def main():
     progress_file = output_dir / ".progress"
     
     logger.info(f"当前进度: {images_collected}/{args.num_images} 张图（已处理 {len(processed_arxiv_ids)} 篇论文）")
+    
+    # 检查是否有未处理的论文
+    unprocessed_papers = [p for p in to_download_papers 
+                          if not (args.resume and p.get('arxiv_id') in processed_arxiv_ids)]
+    
+    if not unprocessed_papers and images_collected < args.num_images:
+        logger.warning(f"所有待下载论文都已被处理，但还未达到目标 ({images_collected}/{args.num_images})")
+        logger.info("自动收集更多论文...")
+        # 收集更多论文
+        collect_papers_from_multiple_categories(db, args.max_papers, args.year)
+        # 获取论文信息
+        pending_papers = db.get_papers_by_status('pendingTitles', limit=args.max_papers)
+        if pending_papers:
+            from fetchers import fetch_paper_info
+            logger.info(f"获取 {len(pending_papers)} 篇论文的详细信息...")
+            for i, paper in enumerate(pending_papers[:50], 1):  # 限制获取50篇，避免耗时过长
+                logger.info(f"获取论文信息 {i}/{min(50, len(pending_papers))}: {paper['title'][:50]}...")
+                info = fetch_paper_info(paper['title'])
+                if info:
+                    db.update_paper_info(paper['id'], {
+                        'arxiv_id': info.get('arxiv_id'),
+                        'pdf_url': info.get('pdf_url'),
+                        'authors': info.get('authors', []),
+                        'abstract': info.get('abstract'),
+                        'status': 'TobeDownloaded'
+                    })
+        # 重新获取待下载论文
+        to_download_papers = db.get_papers_by_status('TobeDownloaded', limit=args.max_papers)
+        unprocessed_papers = [p for p in to_download_papers 
+                              if not (args.resume and p.get('arxiv_id') in processed_arxiv_ids)]
+        if not unprocessed_papers:
+            logger.error("收集论文后仍然没有未处理的论文，退出")
+            return
     
     for paper in to_download_papers:
         if images_collected >= args.num_images:
