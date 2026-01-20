@@ -22,3 +22,11 @@ jinja2==3.1.4
 # PDF报告生成
 reportlab==4.0.7
 Pillow==10.2.0
+
+# 图像相似度评估
+numpy==1.24.3
+scikit-image==0.22.0
+opencv-python==4.9.0.80
+imagehash==4.3.1
+torch==2.1.0
+torchvision==0.16.0

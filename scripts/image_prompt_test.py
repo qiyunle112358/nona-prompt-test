@@ -26,6 +26,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from config import DB_PATH, PDF_DIR, LOG_LEVEL, LOG_FORMAT
 from database import Database
 import collectors
+from scripts.image_similarity import ImageSimilarityEvaluator
 
 # 配置日志
 logging.basicConfig(level=LOG_LEVEL, format=LOG_FORMAT)
@@ -496,15 +497,13 @@ Format:
 class FlowchartExtractor:
     """从PDF中提取流程图/演示图（基于关键词搜索）"""
     
-    # 关键词列表（中文及其英文对应）
+    # 关键词列表（中文及其英文对应，严格按照用户要求）
     KEYWORDS = [
         # 中文关键词
         '流程图', '技术路线', '框架图', '实验设计', '工作流程', '架构图',
         # 对应的英文关键词
         'Flowchart', 'Technical Roadmap', 'Framework Diagram', 'Experimental Design', 
-        'Workflow', 'Architecture Diagram', 'Architecture',
-        # 其他相关英文关键词
-        'Figure', 'System Architecture', 'Method Overview', 'Pipeline'
+        'Workflow', 'Architecture Diagram', 'Architecture'
     ]
     
     def __init__(self, pdf_path: Path, output_dir: Path):
@@ -522,7 +521,7 @@ class FlowchartExtractor:
         """
         keyword_matches = []
         
-        # 中文关键词及其英文对应
+        # 中文关键词及其英文对应（严格按照用户要求）
         keyword_pairs = [
             ('流程图', 'Flowchart'),
             ('技术路线', 'Technical Roadmap'),
@@ -550,18 +549,7 @@ class FlowchartExtractor:
                 elif english_keyword.lower() in text_lower:
                     found = True
                     matched_keyword = english_keyword
-                # 也搜索其他相关英文变体
-                elif any(variant.lower() in text_lower for variant in [
-                    'Architecture', 'Framework', 'Flow Chart', 'Work Flow',
-                    'Experimental Design', 'Technical Roadmap'
-                ]):
-                    # 检查是否是相关的关键词
-                    for variant in ['Architecture', 'Framework', 'Flow Chart', 'Work Flow', 
-                                   'Experimental Design', 'Technical Roadmap']:
-                        if variant.lower() in text_lower:
-                            found = True
-                            matched_keyword = variant
-                            break
+                # 不搜索其他变体，严格按照指定的关键词
                 
                 if found:
                     # 获取关键词周围的文本上下文
@@ -843,6 +831,7 @@ def main():
         # 为每个prompt生成图片
         logger.info(f"  生成 {len(prompts)} 张图片...")
         generated_paths = []
+        generated_prompts = []
         
         for i, prompt in enumerate(prompts, 1):
             gen_dir = output_dir / "generated_images" / arxiv_id
@@ -850,11 +839,34 @@ def main():
             
             if api_client.text_to_image(prompt, gen_path):
                 generated_paths.append(gen_path)
+                generated_prompts.append(prompt)
                 logger.info(f"    ✓ Prompt {i} 图片已生成")
             else:
                 logger.warning(f"    ✗ Prompt {i} 图片生成失败")
         
         if generated_paths:
+            # 评估相似度并排名
+            logger.info(f"  评估图片相似度并排名...")
+            evaluator = ImageSimilarityEvaluator()
+            similarity_scores = []
+            
+            for i, gen_path in enumerate(generated_paths):
+                scores = evaluator.evaluate_similarity(flowchart_path, gen_path)
+                similarity_scores.append({
+                    'index': i + 1,
+                    'path': gen_path,
+                    'prompt': generated_prompts[i],
+                    'scores': scores,
+                    'weighted_score': scores['weighted_score']
+                })
+                logger.info(f"    Prompt {i+1} 相似度: SSIM={scores['ssim']:.3f}, "
+                          f"特征匹配={scores['feature_match']:.3f}, "
+                          f"深度学习={scores['deep_learning']:.3f}, "
+                          f"加权得分={scores['weighted_score']:.3f}")
+            
+            # 按加权得分排序（降序）
+            similarity_scores.sort(key=lambda x: x['weighted_score'], reverse=True)
+            
             # 保存结果
             result_dir = output_dir / "results" / arxiv_id
             result_dir.mkdir(parents=True, exist_ok=True)
@@ -864,39 +876,87 @@ def main():
             final_original = result_dir / "original.png"
             shutil.copy2(flowchart_path, final_original)
             
-            # 复制生成的图片
-            for i, gen_path in enumerate(generated_paths, 1):
-                final_gen = result_dir / f"generated_{i}.png"
-                shutil.copy2(gen_path, final_gen)
+            # 按排名复制生成的图片（排名第一的为generated_1.png）
+            for rank, item in enumerate(similarity_scores, 1):
+                final_gen = result_dir / f"generated_{rank}.png"
+                shutil.copy2(item['path'], final_gen)
             
-            # 保存prompt到文件
+            # 保存prompt到文件（按排名顺序）
             prompts_file = result_dir / "prompts.txt"
             with open(prompts_file, 'w', encoding='utf-8') as f:
                 f.write(f"论文: {paper['title']}\n")
                 f.write(f"来源: {paper.get('source', 'N/A')}\n")
                 f.write(f"arXiv ID: {arxiv_id}\n")
                 f.write("="*80 + "\n\n")
-                for i, prompt in enumerate(prompts, 1):
-                    f.write(f"Prompt {i}:\n{prompt}\n\n")
+                f.write("排名说明：按相似度得分从高到低排序\n")
+                f.write("="*80 + "\n\n")
+                
+                for rank, item in enumerate(similarity_scores, 1):
+                    f.write(f"排名 {rank} (原始Prompt {item['index']}):\n")
+                    f.write(f"加权得分: {item['weighted_score']:.4f}\n")
+                    f.write(f"  - SSIM: {item['scores']['ssim']:.4f}\n")
+                    f.write(f"  - 特征匹配: {item['scores']['feature_match']:.4f}\n")
+                    f.write(f"  - 深度学习: {item['scores']['deep_learning']:.4f}\n")
+                    f.write(f"\nPrompt内容:\n{item['prompt']}\n\n")
                     f.write("-"*80 + "\n\n")
             
             results.append({
                 'paper': paper,
                 'arxiv_id': arxiv_id,
                 'original_image': final_original,
-                'prompts': prompts,
-                'generated_images': [result_dir / f"generated_{i+1}.png" for i in range(len(generated_paths))]
+                'prompts': [item['prompt'] for item in similarity_scores],
+                'generated_images': [result_dir / f"generated_{i+1}.png" for i in range(len(generated_paths))],
+                'similarity_scores': similarity_scores
             })
             
             images_collected += 1
-            logger.info(f"✓ 成功处理第 {images_collected}/{args.num_images} 张流程图")
+            logger.info(f"✓ 成功处理第 {images_collected}/{args.num_images} 张流程图 "
+                      f"(最佳相似度: {similarity_scores[0]['weighted_score']:.3f})")
         else:
             logger.warning(f"  所有图片生成失败，跳过")
     
-    # 生成总结报告
+    # 生成总结报告和精选结果
     logger.info("\n" + "="*80)
-    logger.info("步骤4: 生成总结报告")
+    logger.info("步骤4: 生成总结报告和精选结果")
     logger.info("="*80)
+    
+    # 创建精选结果文件夹（只包含原图、排名第一的生图及其prompt）
+    curated_dir = output_dir / "curated_results"
+    curated_dir.mkdir(parents=True, exist_ok=True)
+    
+    for result in results:
+        arxiv_id = result['arxiv_id']
+        if result.get('similarity_scores') and len(result['similarity_scores']) > 0:
+            # 排名第一的结果
+            best_result = result['similarity_scores'][0]
+            
+            # 创建该论文的精选文件夹
+            paper_curated_dir = curated_dir / arxiv_id
+            paper_curated_dir.mkdir(parents=True, exist_ok=True)
+            
+            # 复制原图
+            import shutil
+            shutil.copy2(result['original_image'], paper_curated_dir / "original.png")
+            
+            # 复制排名第一的生成图
+            best_image_path = result['generated_images'][0]  # 已经是按排名排序的
+            shutil.copy2(best_image_path, paper_curated_dir / "generated_best.png")
+            
+            # 保存排名第一的prompt
+            best_prompt_file = paper_curated_dir / "best_prompt.txt"
+            with open(best_prompt_file, 'w', encoding='utf-8') as f:
+                f.write(f"论文: {result['paper']['title']}\n")
+                f.write(f"来源: {result['paper'].get('source', 'N/A')}\n")
+                f.write(f"arXiv ID: {arxiv_id}\n")
+                f.write(f"相似度得分: {best_result['weighted_score']:.4f}\n")
+                f.write(f"  - SSIM: {best_result['scores']['ssim']:.4f}\n")
+                f.write(f"  - 特征匹配: {best_result['scores']['feature_match']:.4f}\n")
+                f.write(f"  - 深度学习: {best_result['scores']['deep_learning']:.4f}\n")
+                f.write("="*80 + "\n\n")
+                f.write("最佳Prompt:\n")
+                f.write(best_result['prompt'])
+            
+            logger.info(f"✓ 已创建精选结果: {arxiv_id} (得分: {best_result['weighted_score']:.3f})")
     
     summary_file = output_dir / "summary.txt"
     with open(summary_file, 'w', encoding='utf-8') as f:
@@ -909,14 +969,40 @@ def main():
         f.write(f"每个原图生成prompt数: {args.num_prompts}\n\n")
         f.write("="*80 + "\n\n")
         
+        # 统计平均相似度
+        if results:
+            avg_scores = []
+            for result in results:
+                if result.get('similarity_scores') and len(result['similarity_scores']) > 0:
+                    avg_scores.append(result['similarity_scores'][0]['weighted_score'])
+            
+            if avg_scores:
+                f.write(f"平均最佳相似度得分: {sum(avg_scores) / len(avg_scores):.4f}\n")
+                f.write(f"最高相似度得分: {max(avg_scores):.4f}\n")
+                f.write(f"最低相似度得分: {min(avg_scores):.4f}\n\n")
+        
+        f.write("="*80 + "\n")
+        f.write("详细结果:\n")
+        f.write("="*80 + "\n\n")
+        
         for i, result in enumerate(results, 1):
             f.write(f"\n图片 {i}:\n")
             f.write(f"  论文: {result['paper']['title']}\n")
             f.write(f"  arXiv ID: {result['arxiv_id']}\n")
             f.write(f"  原图: {result['original_image']}\n")
             f.write(f"  生成图片数: {len(result['generated_images'])}\n")
+            if result.get('similarity_scores') and len(result['similarity_scores']) > 0:
+                best = result['similarity_scores'][0]
+                f.write(f"  最佳相似度得分: {best['weighted_score']:.4f}\n")
+                f.write(f"     - SSIM: {best['scores']['ssim']:.4f}\n")
+                f.write(f"     - 特征匹配: {best['scores']['feature_match']:.4f}\n")
+                f.write(f"     - 深度学习: {best['scores']['deep_learning']:.4f}\n")
             f.write(f"  详情目录: results/{result['arxiv_id']}/\n")
             f.write("-"*80 + "\n")
+        
+        f.write("\n" + "="*80 + "\n")
+        f.write("精选结果已保存在: curated_results/ 目录\n")
+        f.write("每个论文文件夹包含: original.png, generated_best.png, best_prompt.txt\n")
     
     logger.info("="*80)
     logger.info(f"完成！")
@@ -924,6 +1010,7 @@ def main():
     logger.info(f"  处理了 {papers_processed} 篇论文")
     logger.info(f"  输出目录: {output_dir}")
     logger.info(f"  每个结果保存在: {output_dir}/results/<arxiv_id>/")
+    logger.info(f"  精选结果保存在: {output_dir}/curated_results/<arxiv_id>/")
     logger.info("="*80)
 
 
