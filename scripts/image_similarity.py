@@ -19,6 +19,8 @@ except ImportError:
     SSIM_AVAILABLE = False
     logger.warning("scikit-image未安装，SSIM评估将不可用")
 
+# 全局变量，用于标记PyTorch是否可用
+TORCH_AVAILABLE = False
 try:
     import torch
     import torchvision.transforms as transforms
@@ -40,6 +42,7 @@ class ImageSimilarityEvaluator:
     """图像相似度评估器"""
     
     def __init__(self):
+        global TORCH_AVAILABLE
         self.device = None
         self.model = None
         self.transform = None
@@ -158,6 +161,7 @@ class ImageSimilarityEvaluator:
     
     def calculate_deep_learning(self, img1: np.ndarray, img2: np.ndarray) -> float:
         """使用深度学习模型计算相似度"""
+        global TORCH_AVAILABLE
         if not TORCH_AVAILABLE or self.model is None:
             # 降级到感知哈希
             return self.calculate_perceptual_hash(img1, img2)
