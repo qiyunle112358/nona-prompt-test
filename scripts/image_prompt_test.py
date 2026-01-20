@@ -13,9 +13,12 @@ import random
 import os
 import base64
 import json
+import time
 from pathlib import Path
 from typing import List, Dict, Optional, Tuple
 from datetime import datetime
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from threading import Lock
 import requests
 from PIL import Image
 import fitz  # PyMuPDF
@@ -61,15 +64,29 @@ Context Explanation: I have provided you with the context of the project files c
 
 
 class OpenRouterClient:
-    """OpenRouter API客户端"""
+    """OpenRouter API客户端（支持重试）"""
     
-    def __init__(self, api_key: str):
+    def __init__(self, api_key: str, max_retries: int = 3):
         self.api_key = api_key
         self.base_url = "https://openrouter.ai/api/v1"
         self.headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json"
         }
+        self.max_retries = max_retries
+    
+    def _retry_request(self, func, *args, **kwargs):
+        """重试机制（指数退避）"""
+        for attempt in range(self.max_retries):
+            try:
+                return func(*args, **kwargs)
+            except Exception as e:
+                if attempt == self.max_retries - 1:
+                    raise
+                wait_time = 2 ** attempt
+                logger.warning(f"请求失败，{wait_time}秒后重试 (尝试 {attempt+1}/{self.max_retries}): {e}")
+                time.sleep(wait_time)
+        return None
     
     def image_to_text(self, image_path: Path, num_prompts: int = 5) -> List[str]:
         """
@@ -154,13 +171,16 @@ Format:
             }
             
             logger.info(f"调用OpenRouter API分析图片: {image_path.name}")
-            response = requests.post(url, headers=self.headers, json=payload, timeout=120)
             
-            if response.status_code != 200:
-                logger.error(f"API请求失败: {response.status_code} - {response.text}")
+            def make_request():
+                response = requests.post(url, headers=self.headers, json=payload, timeout=120)
+                if response.status_code != 200:
+                    raise Exception(f"API请求失败: {response.status_code} - {response.text}")
+                return response.json()
+            
+            result = self._retry_request(make_request)
+            if not result:
                 return []
-            
-            result = response.json()
             
             if "choices" in result and len(result["choices"]) > 0:
                 content = result["choices"][0]["message"]["content"].strip()
@@ -451,13 +471,16 @@ Format:
             }
             
             logger.info(f"调用OpenRouter API生成图片...")
-            response = requests.post(url, headers=self.headers, json=payload, timeout=600)
             
-            if response.status_code != 200:
-                logger.error(f"API请求失败: {response.status_code} - {response.text}")
+            def make_request():
+                response = requests.post(url, headers=self.headers, json=payload, timeout=600)
+                if response.status_code != 200:
+                    raise Exception(f"API请求失败: {response.status_code} - {response.text}")
+                return response.json()
+            
+            result = self._retry_request(make_request)
+            if not result:
                 return False
-            
-            result = response.json()
             
             # 提取生成的图像
             if "choices" in result and len(result["choices"]) > 0:
@@ -726,13 +749,16 @@ def collect_papers_from_multiple_categories(db: Database, num_papers: int = 100,
 
 
 def main():
-    parser = argparse.ArgumentParser(description='图片Prompt测试脚本 - 完整流程')
+    parser = argparse.ArgumentParser(description='图片Prompt测试脚本 - 完整流程（优化版）')
     parser.add_argument('--num-images', type=int, default=100, help='要收集的流程图数量（默认100）')
     parser.add_argument('--year', type=int, default=2024, help='论文年份（默认2024）')
     parser.add_argument('--openrouter-api-key', type=str, required=True, help='OpenRouter API密钥')
     parser.add_argument('--num-prompts', type=int, default=5, help='每个原图生成的prompt数量（默认5）')
     parser.add_argument('--output-dir', type=str, default='data/prompt_test', help='输出目录')
     parser.add_argument('--max-papers', type=int, default=500, help='最多处理的论文数量（默认500）')
+    parser.add_argument('--parallel-images', type=int, default=3, help='并行生成图片数（默认3，避免API限流）')
+    parser.add_argument('--parallel-eval', type=int, default=5, help='并行评估相似度数（默认5）')
+    parser.add_argument('--resume', action='store_true', help='从上次中断处继续')
     
     args = parser.parse_args()
     
@@ -747,6 +773,15 @@ def main():
     # 初始化数据库和API客户端
     db = Database(str(DB_PATH))
     api_client = OpenRouterClient(args.openrouter_api_key)
+    
+    # 加载已处理的论文（断点续传）
+    processed_arxiv_ids = set()
+    if args.resume:
+        progress_file = output_dir / ".progress"
+        if progress_file.exists():
+            with open(progress_file, 'r') as f:
+                processed_arxiv_ids = set(line.strip() for line in f if line.strip())
+            logger.info(f"从进度文件加载: {len(processed_arxiv_ids)} 篇论文已处理")
     
     # 步骤1: 收集论文
     logger.info("\n" + "="*80)
@@ -788,6 +823,9 @@ def main():
     images_collected = 0
     papers_processed = 0
     
+    # 保存进度文件
+    progress_file = output_dir / ".progress"
+    
     for paper in to_download_papers:
         if images_collected >= args.num_images:
             break
@@ -796,6 +834,12 @@ def main():
         pdf_url = paper.get('pdf_url')
         
         if not arxiv_id or not pdf_url:
+            continue
+        
+        # 检查是否已处理（断点续传）
+        if args.resume and arxiv_id in processed_arxiv_ids:
+            logger.info(f"跳过已处理的论文: {arxiv_id}")
+            images_collected += 1
             continue
         
         papers_processed += 1
@@ -828,41 +872,56 @@ def main():
             logger.warning(f"  未能生成prompt，跳过")
             continue
         
-        # 为每个prompt生成图片
-        logger.info(f"  生成 {len(prompts)} 张图片...")
-        generated_paths = []
-        generated_prompts = []
+        # 并行生成图片
+        logger.info(f"  并行生成 {len(prompts)} 张图片...")
+        gen_dir = output_dir / "generated_images" / arxiv_id
+        gen_dir.mkdir(parents=True, exist_ok=True)
         
-        for i, prompt in enumerate(prompts, 1):
-            gen_dir = output_dir / "generated_images" / arxiv_id
+        def generate_image(i, prompt):
             gen_path = gen_dir / f"prompt_{i}.png"
-            
             if api_client.text_to_image(prompt, gen_path):
-                generated_paths.append(gen_path)
-                generated_prompts.append(prompt)
-                logger.info(f"    ✓ Prompt {i} 图片已生成")
-            else:
-                logger.warning(f"    ✗ Prompt {i} 图片生成失败")
+                return (i, gen_path, prompt)
+            return None
+        
+        generated_results = []
+        with ThreadPoolExecutor(max_workers=args.parallel_images) as executor:
+            futures = {executor.submit(generate_image, i+1, p): i for i, p in enumerate(prompts)}
+            for future in as_completed(futures):
+                result = future.result()
+                if result:
+                    generated_results.append(result)
+                    logger.info(f"    ✓ Prompt {result[0]} 图片已生成")
+        
+        # 按原始顺序排序
+        generated_results.sort(key=lambda x: x[0])
+        generated_paths = [r[1] for r in generated_results]
+        generated_prompts = [r[2] for r in generated_results]
         
         if generated_paths:
-            # 评估相似度并排名
-            logger.info(f"  评估图片相似度并排名...")
+            # 并行评估相似度并排名
+            logger.info(f"  并行评估 {len(generated_paths)} 张图片的相似度...")
             evaluator = ImageSimilarityEvaluator()
-            similarity_scores = []
             
-            for i, gen_path in enumerate(generated_paths):
+            def evaluate_image(i, gen_path):
                 scores = evaluator.evaluate_similarity(flowchart_path, gen_path)
-                similarity_scores.append({
+                return {
                     'index': i + 1,
                     'path': gen_path,
                     'prompt': generated_prompts[i],
                     'scores': scores,
                     'weighted_score': scores['weighted_score']
-                })
-                logger.info(f"    Prompt {i+1} 相似度: SSIM={scores['ssim']:.3f}, "
-                          f"特征匹配={scores['feature_match']:.3f}, "
-                          f"深度学习={scores['deep_learning']:.3f}, "
-                          f"加权得分={scores['weighted_score']:.3f}")
+                }
+            
+            similarity_scores = []
+            with ThreadPoolExecutor(max_workers=args.parallel_eval) as executor:
+                futures = {executor.submit(evaluate_image, i, path): i for i, path in enumerate(generated_paths)}
+                for future in as_completed(futures):
+                    result = future.result()
+                    similarity_scores.append(result)
+                    logger.info(f"    Prompt {result['index']} 相似度: SSIM={result['scores']['ssim']:.3f}, "
+                              f"特征匹配={result['scores']['feature_match']:.3f}, "
+                              f"深度学习={result['scores']['deep_learning']:.3f}, "
+                              f"加权得分={result['weighted_score']:.3f}")
             
             # 按加权得分排序（降序）
             similarity_scores.sort(key=lambda x: x['weighted_score'], reverse=True)
