@@ -99,8 +99,8 @@ class OpenRouterClient:
             mime_type = mime_types.get(ext, 'image/png')
             image_url = f"data:{mime_type};base64,{image_base64}"
             
-            # 构建prompt，要求生成多个不同的prompt
-            prompt_text = f"""Analyze this scientific/academic diagram/flowchart image and generate exactly {num_prompts} different detailed prompts that could be used to recreate a similar image. 
+            # 构建prompt，要求生成非常详细的prompt
+            prompt_text = f"""Analyze this scientific/academic diagram/flowchart image and generate exactly {num_prompts} different extremely detailed prompts that could be used to recreate an image as identical as possible to the original.
 
 CRITICAL REQUIREMENTS:
 - Return ONLY the {num_prompts} prompts, nothing else
@@ -109,18 +109,26 @@ CRITICAL REQUIREMENTS:
 - Each prompt should be on a separate line, numbered as "1.", "2.", "3.", etc.
 - Use a blank line between each prompt for clarity
 
-Each prompt should:
-1. Describe the visual structure, layout, and components clearly
-2. Specify the style (scientific diagram, flowchart, architecture diagram, etc.)
-3. Include details about colors, shapes, connections, and annotations
-4. Be comprehensive and detailed enough to recreate a similar image
+Each prompt MUST be extremely detailed and describe EVERY aspect of the image:
+1. **Layout and Structure**: Exact positioning, arrangement, alignment of all elements
+2. **Visual Elements**: Every shape, box, circle, arrow, line, connector - their exact positions, sizes, orientations
+3. **Text and Labels**: All text content, labels, annotations, their exact positions and fonts
+4. **Colors**: Exact color scheme for each element (use specific color names or hex codes)
+5. **Connections**: All arrows, lines, connections between elements - their directions, styles, endpoints
+6. **Styling**: Line thickness, border styles, fill patterns, shadows, gradients
+7. **Spacing**: Exact distances, margins, padding between elements
+8. **Background**: Background color, patterns, or transparency
+9. **Typography**: Font sizes, weights, styles for all text elements
+10. **Overall Style**: Scientific diagram style, academic paper style, etc.
 
-Example format (DO NOT include this example text, just follow the format):
-1. [First detailed prompt describing the image]
-2. [Second detailed prompt describing the image]
-3. [Third detailed prompt describing the image]
-4. [Fourth detailed prompt describing the image]
-5. [Fifth detailed prompt describing the image]"""
+The goal is to create prompts so detailed that the generated image will be as identical as possible to the original image. Describe every single detail you can observe.
+
+Format:
+1. [First extremely detailed prompt]
+2. [Second extremely detailed prompt]
+3. [Third extremely detailed prompt]
+4. [Fourth extremely detailed prompt]
+5. [Fifth extremely detailed prompt]"""
 
             url = f"{self.base_url}/chat/completions"
             payload = {
@@ -488,12 +496,15 @@ Example format (DO NOT include this example text, just follow the format):
 class FlowchartExtractor:
     """从PDF中提取流程图/演示图（基于关键词搜索）"""
     
-    # 关键词列表（英文和中文）
+    # 关键词列表（中文及其英文对应）
     KEYWORDS = [
-        'Figure', 'workflow', 'Architecture Diagram', 'Flowchart', 
-        'Experimental Design', 'Technical Roadmap',
-        '流程图', '技术路线', '框架图', '实验设计', 
-        '示意图', '工作流程', '架构图'
+        # 中文关键词
+        '流程图', '技术路线', '框架图', '实验设计', '工作流程', '架构图',
+        # 对应的英文关键词
+        'Flowchart', 'Technical Roadmap', 'Framework Diagram', 'Experimental Design', 
+        'Workflow', 'Architecture Diagram', 'Architecture',
+        # 其他相关英文关键词
+        'Figure', 'System Architecture', 'Method Overview', 'Pipeline'
     ]
     
     def __init__(self, pdf_path: Path, output_dir: Path):
@@ -504,32 +515,68 @@ class FlowchartExtractor:
     def search_keywords_in_pdf(self, doc) -> List[Dict]:
         """
         在PDF中搜索关键词，返回包含关键词的页面和位置信息
+        搜索中文关键词及其对应的英文关键词
         
         Returns:
             包含关键词的页面列表，每个元素包含 {page_num, text, keyword}
         """
         keyword_matches = []
         
+        # 中文关键词及其英文对应
+        keyword_pairs = [
+            ('流程图', 'Flowchart'),
+            ('技术路线', 'Technical Roadmap'),
+            ('框架图', 'Framework Diagram'),
+            ('实验设计', 'Experimental Design'),
+            ('工作流程', 'Workflow'),
+            ('架构图', 'Architecture Diagram')
+        ]
+        
         for page_num in range(len(doc)):
             page = doc[page_num]
-            text = page.get_text("text").lower()
+            text = page.get_text("text")
+            text_lower = text.lower()
             
-            # 搜索每个关键词
-            for keyword in self.KEYWORDS:
-                keyword_lower = keyword.lower()
-                if keyword_lower in text:
+            # 搜索中文关键词及其英文对应
+            for chinese_keyword, english_keyword in keyword_pairs:
+                found = False
+                matched_keyword = None
+                
+                # 先搜索中文关键词
+                if chinese_keyword in text:
+                    found = True
+                    matched_keyword = chinese_keyword
+                # 再搜索对应的英文关键词
+                elif english_keyword.lower() in text_lower:
+                    found = True
+                    matched_keyword = english_keyword
+                # 也搜索其他相关英文变体
+                elif any(variant.lower() in text_lower for variant in [
+                    'Architecture', 'Framework', 'Flow Chart', 'Work Flow',
+                    'Experimental Design', 'Technical Roadmap'
+                ]):
+                    # 检查是否是相关的关键词
+                    for variant in ['Architecture', 'Framework', 'Flow Chart', 'Work Flow', 
+                                   'Experimental Design', 'Technical Roadmap']:
+                        if variant.lower() in text_lower:
+                            found = True
+                            matched_keyword = variant
+                            break
+                
+                if found:
                     # 获取关键词周围的文本上下文
-                    keyword_index = text.find(keyword_lower)
+                    keyword_index = text_lower.find(matched_keyword.lower())
                     start = max(0, keyword_index - 100)
-                    end = min(len(text), keyword_index + len(keyword) + 100)
+                    end = min(len(text), keyword_index + len(matched_keyword) + 100)
                     context = text[start:end]
                     
                     keyword_matches.append({
                         'page_num': page_num,
-                        'keyword': keyword,
+                        'keyword': matched_keyword,
                         'context': context
                     })
-                    logger.debug(f"在第{page_num+1}页找到关键词: {keyword}")
+                    logger.info(f"在第{page_num+1}页找到关键词: {matched_keyword}")
+                    break  # 找到关键词后，跳出循环，继续下一页
         
         return keyword_matches
     
@@ -608,8 +655,14 @@ class FlowchartExtractor:
             
             logger.info(f"在PDF中找到 {len(keyword_matches)} 个关键词匹配")
             
-            # 2. 按优先级提取图片（优先选择包含"Figure"、"workflow"、"Architecture"等关键词的页面）
-            priority_keywords = ['workflow', 'architecture', 'flowchart', '框架图', '流程图', '架构图']
+            if not keyword_matches:
+                doc.close()
+                logger.warning(f"PDF {self.pdf_path.name} 中未找到关键词（流程图、技术路线、框架图、实验设计、工作流程、架构图），跳过此论文")
+                return None
+            
+            # 2. 按优先级提取图片（优先选择包含流程图、架构图、工作流程等关键词的页面）
+            priority_keywords = ['流程图', 'Flowchart', '架构图', 'Architecture', '工作流程', 'Workflow', 
+                               '技术路线', 'Technical Roadmap', '框架图', 'Framework']
             
             # 先尝试优先级高的关键词
             for priority_kw in priority_keywords:
