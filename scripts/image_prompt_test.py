@@ -1004,17 +1004,25 @@ def main():
     to_download_papers = db.get_papers_by_status('TobeDownloaded', limit=args.max_papers)
     if not to_download_papers:
         logger.warning("没有待下载的论文")
+        # 如果使用resume且已有进度，检查是否需要继续收集论文
+        if args.resume and len(processed_arxiv_ids) > 0 and len(processed_arxiv_ids) < args.num_images:
+            logger.info(f"当前已处理 {len(processed_arxiv_ids)} 张图，目标 {args.num_images} 张，但数据库中没有更多待处理论文")
+            logger.info("建议：重新运行脚本（不使用--resume）以收集更多论文")
         return
     
     results = []
-    images_collected = 0
+    # 从已处理的论文数开始计数（断点续传）
+    images_collected = len(processed_arxiv_ids) if args.resume else 0
     papers_processed = 0
     
     # 保存进度文件
     progress_file = output_dir / ".progress"
     
+    logger.info(f"当前进度: {images_collected}/{args.num_images} 张图（已处理 {len(processed_arxiv_ids)} 篇论文）")
+    
     for paper in to_download_papers:
         if images_collected >= args.num_images:
+            logger.info(f"已达到目标数量 {args.num_images} 张图，停止处理")
             break
         
         arxiv_id = paper.get('arxiv_id')
@@ -1026,7 +1034,6 @@ def main():
         # 检查是否已处理（断点续传）
         if args.resume and arxiv_id in processed_arxiv_ids:
             logger.info(f"跳过已处理的论文: {arxiv_id}")
-            images_collected += 1
             continue
         
         papers_processed += 1
