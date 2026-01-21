@@ -35,7 +35,7 @@ from scripts.image_similarity import ImageSimilarityEvaluator
 logging.basicConfig(level=LOG_LEVEL, format=LOG_FORMAT)
 logger = logging.getLogger(__name__)
 
-# 不同领域的arXiv分类
+# 不同领域的arXiv分类（排除文科和纯数学类，专注于有流程图的领域）
 ARXIV_CATEGORIES = [
     'cs.CV',  # 计算机视觉
     'cs.CL',  # 自然语言处理
@@ -43,12 +43,15 @@ ARXIV_CATEGORIES = [
     'cs.AI',  # 人工智能
     'cs.RO',  # 机器人学
     'cs.GR',  # 图形学
+    'cs.NE',  # 神经网络与进化计算
+    'cs.SY',  # 系统与控制
     'physics.optics',  # 光学
     'physics.med-ph',  # 医学物理
     'q-bio.BM',  # 生物分子
-    'math.OC',  # 优化与控制
+    'q-bio.QM',  # 定量方法
     'stat.ML',  # 统计机器学习
     'eess.IV',  # 图像与视频处理
+    'eess.SP',  # 信号处理
 ]
 
 # 前置prompt（用于生图）
@@ -605,10 +608,10 @@ class FlowchartExtractor:
     # 关键词列表（中文及其英文对应，严格按照用户要求）
     KEYWORDS = [
         # 中文关键词
-        '流程图', '技术路线', '框架图', '实验设计', '工作流程', '架构图',
+        '流程图', '技术路线', '框架图', '实验设计', '工作流程', '架构图', '流水线',
         # 对应的英文关键词
         'Flowchart', 'Technical Roadmap', 'Framework Diagram', 'Experimental Design', 
-        'Workflow', 'Architecture Diagram', 'Architecture'
+        'Workflow', 'Architecture Diagram', 'Architecture', 'Pipeline'
     ]
     
     def __init__(self, pdf_path: Path, output_dir: Path):
@@ -633,7 +636,8 @@ class FlowchartExtractor:
             ('框架图', 'Framework Diagram'),
             ('实验设计', 'Experimental Design'),
             ('工作流程', 'Workflow'),
-            ('架构图', 'Architecture Diagram')
+            ('架构图', 'Architecture Diagram'),
+            ('流水线', 'Pipeline')  # 添加pipeline
         ]
         
         for page_num in range(len(doc)):
@@ -669,7 +673,7 @@ class FlowchartExtractor:
                         'context': context
                     })
                     logger.info(f"在第{page_num+1}页找到关键词: {matched_keyword}")
-                    break  # 找到关键词后，跳出循环，继续下一页
+                    # 不break，继续搜索该页面的其他关键词（可能一个页面有多个关键词）
         
         return keyword_matches
     
@@ -850,30 +854,70 @@ class FlowchartExtractor:
                 logger.warning(f"PDF {self.pdf_path.name} 中未找到关键词（流程图、技术路线、框架图、实验设计、工作流程、架构图），跳过此论文")
                 return None
             
-            # 2. 按优先级提取图片（优先选择包含流程图、架构图、工作流程等关键词的页面）
-            priority_keywords = ['流程图', 'Flowchart', '架构图', 'Architecture', '工作流程', 'Workflow', 
-                               '技术路线', 'Technical Roadmap', '框架图', 'Framework']
+            # 2. 改进的图片提取逻辑：尝试所有匹配的关键词和页面，选择最合适的
+            # 优先级关键词（更可能包含流程图），按优先级排序
+            priority_keywords = [
+                'Pipeline', '流水线',  # 最高优先级
+                '流程图', 'Flowchart', 
+                '架构图', 'Architecture', 
+                '工作流程', 'Workflow',
+                '技术路线', 'Technical Roadmap', 
+                '框架图', 'Framework Diagram',
+                '实验设计', 'Experimental Design'
+            ]
             
-            # 先尝试优先级高的关键词
-            for priority_kw in priority_keywords:
-                for match in keyword_matches:
-                    if priority_kw.lower() in match['keyword'].lower():
-                        image_path = self.extract_image_near_keyword(
-                            doc, match['page_num'], match['keyword']
-                        )
-                        if image_path:
-                            doc.close()
-                            logger.info(f"成功提取流程图: {image_path.name} (基于关键词: {match['keyword']})")
-                            return image_path
+            # 收集所有候选图片（关键词，页面，图片路径，距离）
+            candidates = []
             
-            # 如果没有找到，尝试其他关键词
+            # 尝试所有匹配的关键词
+            for match in keyword_matches:
+                image_path = self.extract_image_near_keyword(
+                    doc, match['page_num'], match['keyword']
+                )
+                if image_path:
+                    # 计算优先级分数（Pipeline最高）
+                    priority_score = 0
+                    for i, kw in enumerate(priority_keywords):
+                        if kw.lower() in match['keyword'].lower():
+                            priority_score = len(priority_keywords) - i  # 越靠前分数越高
+                            break
+                    
+                    candidates.append({
+                        'image_path': image_path,
+                        'match': match,
+                        'priority': priority_score,
+                        'page_num': match['page_num']
+                    })
+                    logger.info(f"找到候选图片: {image_path.name} (关键词: {match['keyword']}, 页面: {match['page_num']+1}, 优先级: {priority_score})")
+            
+            if candidates:
+                # 按优先级排序，选择优先级最高的
+                # 优先级相同时，选择页面编号较大的（通常后面的页面更详细）
+                candidates.sort(key=lambda x: (x['priority'], x['page_num']), reverse=True)
+                best_candidate = candidates[0]
+                
+                # 清理其他候选图片（只保留最佳选择）
+                for candidate in candidates[1:]:
+                    if candidate['image_path'].exists():
+                        candidate['image_path'].unlink()
+                        logger.debug(f"删除候选图片: {candidate['image_path'].name}")
+                
+                doc.close()
+                logger.info(f"成功提取流程图: {best_candidate['image_path'].name} "
+                          f"(基于关键词: {best_candidate['match']['keyword']}, "
+                          f"页面: {best_candidate['match']['page_num']+1}, "
+                          f"优先级: {best_candidate['priority']}, "
+                          f"共找到 {len(candidates)} 个候选)")
+                return best_candidate['image_path']
+            
+            # 如果没有找到任何图片，尝试其他关键词（降级方法）
             for match in keyword_matches:
                 image_path = self.extract_image_near_keyword(
                     doc, match['page_num'], match['keyword']
                 )
                 if image_path:
                     doc.close()
-                    logger.info(f"成功提取流程图: {image_path.name} (基于关键词: {match['keyword']})")
+                    logger.info(f"成功提取流程图: {image_path.name} (基于关键词: {match['keyword']}, 页面: {match['page_num']+1})")
                     return image_path
             
             doc.close()
@@ -927,6 +971,210 @@ def collect_papers_from_multiple_categories(db: Database, num_papers: int = 100,
     return papers_collected
 
 
+def process_single_paper(paper, api_client, output_dir, args, db, progress_file, progress_lock, processed_arxiv_ids):
+    """
+    处理单篇论文的完整流程（用于并行处理）
+    
+    Returns:
+        dict: 处理结果，包含 'arxiv_id', 'result_data' 等，失败返回 None
+    """
+    arxiv_id = paper.get('arxiv_id')
+    pdf_url = paper.get('pdf_url')
+    
+    if not arxiv_id or not pdf_url:
+        return None
+    
+    # 检查是否已处理（断点续传）
+    if args.resume and arxiv_id in processed_arxiv_ids:
+        logger.info(f"跳过已处理的论文: {arxiv_id}")
+        return None
+    
+    logger.info(f"\n处理论文: {paper['title'][:60]}... (ID: {arxiv_id})")
+    pdf_path = None
+    
+    try:
+        # 1. 下载PDF
+        pdf_path = PDF_DIR / f"{arxiv_id}.pdf"
+        if not pdf_path.exists():
+            from processors import download_pdf
+            logger.info(f"  [{arxiv_id}] 下载PDF...")
+            if not download_pdf(pdf_url, pdf_path):
+                logger.warning(f"  [{arxiv_id}] PDF下载失败，跳过")
+                # 如果下载失败但文件存在，删除它
+                if pdf_path.exists():
+                    pdf_path.unlink()
+                    logger.info(f"  [{arxiv_id}] 已删除失败的PDF文件")
+                return None
+        
+        # 2. 提取流程图
+        logger.info(f"  [{arxiv_id}] 提取流程图...")
+        extractor = FlowchartExtractor(pdf_path, output_dir / "original_images" / arxiv_id)
+        flowchart_path = extractor.extract_flowchart()
+        
+        if not flowchart_path:
+            logger.warning(f"  [{arxiv_id}] 未找到流程图，删除PDF并跳过")
+            # 删除PDF文件
+            if pdf_path.exists():
+                pdf_path.unlink()
+                logger.info(f"  [{arxiv_id}] 已删除PDF文件")
+            # 删除此论文记录
+            db.delete_paper(paper['id'])
+            return None
+        
+        # 3. 生成prompt
+        logger.info(f"  [{arxiv_id}] 生成prompt...")
+        prompts = api_client.image_to_text(flowchart_path, args.num_prompts)
+        
+        if not prompts:
+            logger.warning(f"  [{arxiv_id}] 未能生成prompt，删除PDF并跳过")
+            # 删除PDF文件
+            if pdf_path.exists():
+                pdf_path.unlink()
+                logger.info(f"  [{arxiv_id}] 已删除PDF文件")
+            return None
+        
+        # 4. 并行生成图片
+        logger.info(f"  [{arxiv_id}] 并行生成 {len(prompts)} 张图片...")
+        gen_dir = output_dir / "generated_images" / arxiv_id
+        gen_dir.mkdir(parents=True, exist_ok=True)
+        
+        def generate_image(i, prompt):
+            gen_path = gen_dir / f"prompt_{i}.png"
+            if api_client.text_to_image(prompt, gen_path):
+                return (i, gen_path, prompt)
+            return None
+        
+        generated_results = []
+        with ThreadPoolExecutor(max_workers=args.parallel_images) as executor:
+            futures = {executor.submit(generate_image, i+1, p): i for i, p in enumerate(prompts)}
+            # 添加超时处理，避免无限等待
+            import time
+            start_time = time.time()
+            max_wait_time = 600  # 10分钟总超时
+            completed_count = 0
+            
+            try:
+                for future in as_completed(futures, timeout=max_wait_time):
+                    try:
+                        result = future.result(timeout=30)  # 每个future最多等待30秒
+                        if result:
+                            generated_results.append(result)
+                            completed_count += 1
+                            logger.info(f"    [{arxiv_id}] ✓ Prompt {result[0]} 图片已生成 ({completed_count}/{len(prompts)})")
+                    except Exception as e:
+                        logger.warning(f"    [{arxiv_id}] 图片生成失败: {e}")
+                        completed_count += 1
+                    
+                    # 如果所有future都已完成（成功或失败），退出循环
+                    if completed_count >= len(prompts):
+                        break
+                    
+                    # 如果等待时间过长，使用已生成的图片继续
+                    if time.time() - start_time > max_wait_time:
+                        logger.warning(f"  [{arxiv_id}] 图片生成总时间超时，使用已生成的 {len(generated_results)} 张图片继续处理")
+                        break
+            except Exception as e:
+                logger.warning(f"  [{arxiv_id}] 等待图片生成时出错: {e}，使用已生成的 {len(generated_results)} 张图片继续处理")
+        
+        # 按原始顺序排序
+        generated_results.sort(key=lambda x: x[0])
+        generated_paths = [r[1] for r in generated_results]
+        generated_prompts = [r[2] for r in generated_results]
+        
+        if not generated_paths:
+            logger.warning(f"  [{arxiv_id}] 所有图片生成失败，删除PDF并跳过")
+            # 删除PDF文件
+            if pdf_path.exists():
+                pdf_path.unlink()
+                logger.info(f"  [{arxiv_id}] 已删除PDF文件")
+            return None
+        
+        # 5. 并行评估相似度并排名
+        logger.info(f"  [{arxiv_id}] 并行评估 {len(generated_paths)} 张图片的相似度...")
+        evaluator = ImageSimilarityEvaluator()
+        
+        def evaluate_image(i, gen_path):
+            scores = evaluator.evaluate_similarity(flowchart_path, gen_path)
+            return {
+                'index': i + 1,
+                'path': gen_path,
+                'prompt': generated_prompts[i],
+                'scores': scores,
+                'weighted_score': scores['weighted_score']
+            }
+        
+        similarity_scores = []
+        with ThreadPoolExecutor(max_workers=args.parallel_eval) as executor:
+            futures = {executor.submit(evaluate_image, i, path): i for i, path in enumerate(generated_paths)}
+            for future in as_completed(futures):
+                result = future.result()
+                similarity_scores.append(result)
+                logger.info(f"    [{arxiv_id}] Prompt {result['index']} 相似度: SSIM={result['scores']['ssim']:.3f}, "
+                          f"特征匹配={result['scores']['feature_match']:.3f}, "
+                          f"深度学习={result['scores']['deep_learning']:.3f}, "
+                          f"加权得分={result['weighted_score']:.3f}")
+        
+        # 按加权得分排序（降序）
+        similarity_scores.sort(key=lambda x: x['weighted_score'], reverse=True)
+        
+        # 6. 保存结果
+        result_dir = output_dir / "results" / arxiv_id
+        result_dir.mkdir(parents=True, exist_ok=True)
+        
+        # 复制原图
+        import shutil
+        final_original = result_dir / "original.png"
+        shutil.copy2(flowchart_path, final_original)
+        
+        # 按排名复制生成的图片（排名第一的为generated_1.png）
+        for rank, item in enumerate(similarity_scores, 1):
+            final_gen = result_dir / f"generated_{rank}.png"
+            shutil.copy2(item['path'], final_gen)
+        
+        # 保存prompt到文件（按排名顺序）
+        prompts_file = result_dir / "prompts.txt"
+        with open(prompts_file, 'w', encoding='utf-8') as f:
+            f.write(f"论文: {paper['title']}\n")
+            f.write(f"来源: {paper.get('source', 'N/A')}\n")
+            f.write(f"arXiv ID: {arxiv_id}\n")
+            f.write("="*80 + "\n\n")
+            f.write("排名说明：按相似度得分从高到低排序\n")
+            f.write("="*80 + "\n\n")
+            
+            for rank, item in enumerate(similarity_scores, 1):
+                f.write(f"排名 {rank} (原始Prompt {item['index']}):\n")
+                f.write(f"加权得分: {item['weighted_score']:.4f}\n")
+                f.write(f"  - SSIM: {item['scores']['ssim']:.4f}\n")
+                f.write(f"  - 特征匹配: {item['scores']['feature_match']:.4f}\n")
+                f.write(f"  - 深度学习: {item['scores']['deep_learning']:.4f}\n")
+                f.write(f"\nPrompt内容:\n{item['prompt']}\n\n")
+                f.write("-"*80 + "\n\n")
+        
+        # 保存进度（线程安全）
+        with progress_lock:
+            with open(progress_file, 'a') as f:
+                f.write(f"{arxiv_id}\n")
+        
+        logger.info(f"  [{arxiv_id}] ✓ 成功处理 (最佳相似度: {similarity_scores[0]['weighted_score']:.3f})")
+        
+        return {
+            'arxiv_id': arxiv_id,
+            'paper': paper,
+            'original_image': final_original,
+            'prompts': [item['prompt'] for item in similarity_scores],
+            'generated_images': [result_dir / f"generated_{i+1}.png" for i in range(len(generated_paths))],
+            'similarity_scores': similarity_scores
+        }
+        
+    except Exception as e:
+        logger.error(f"  [{arxiv_id}] 处理论文时出错: {e}", exc_info=True)
+        # 出错时删除PDF
+        if pdf_path and pdf_path.exists():
+            pdf_path.unlink()
+            logger.info(f"  [{arxiv_id}] 已删除PDF文件（因错误）")
+        return None
+
+
 def main():
     parser = argparse.ArgumentParser(description='图片Prompt测试脚本 - 完整流程（优化版）')
     parser.add_argument('--num-images', type=int, default=100, help='要收集的流程图数量（默认100）')
@@ -937,6 +1185,7 @@ def main():
     parser.add_argument('--max-papers', type=int, default=500, help='最多处理的论文数量（默认500）')
     parser.add_argument('--parallel-images', type=int, default=3, help='并行生成图片数（默认3，避免API限流）')
     parser.add_argument('--parallel-eval', type=int, default=5, help='并行评估相似度数（默认5）')
+    parser.add_argument('--parallel-papers', type=int, default=3, help='并行处理论文数（默认3，论文级别并行）')
     parser.add_argument('--resume', action='store_true', help='从上次中断处继续')
     
     args = parser.parse_args()
@@ -961,24 +1210,12 @@ def main():
             with open(progress_file, 'r') as f:
                 processed_arxiv_ids = set(line.strip() for line in f if line.strip())
             logger.info(f"从进度文件加载: {len(processed_arxiv_ids)} 篇论文已处理")
-        
-        # 检查是否需要收集更多论文
-        to_download_count = len(db.get_papers_by_status('TobeDownloaded', limit=1000))
-        pending_count = len(db.get_papers_by_status('pendingTitles', limit=1000))
-        total_available = to_download_count + pending_count
-        
-        if total_available < (args.num_images - len(processed_arxiv_ids)):
-            logger.warning(f"可用论文数 ({total_available}) 可能不足以达到目标 ({args.num_images - len(processed_arxiv_ids)} 张)，将执行步骤1和步骤2收集更多论文")
-            # 需要收集更多论文
-            need_more_papers = True
-        else:
             logger.info("使用 --resume 模式，跳过步骤1和步骤2，直接进入步骤3")
-            need_more_papers = False
-    else:
-        need_more_papers = True
+        else:
+            logger.warning("进度文件不存在，将执行完整流程")
     
-    # 步骤1: 收集论文（如果需要）
-    if need_more_papers:
+    # 步骤1: 收集论文（如果使用resume且已有足够论文，则跳过）
+    if not args.resume or len(processed_arxiv_ids) == 0:
         logger.info("\n" + "="*80)
         logger.info("步骤1: 收集论文标题")
         logger.info("="*80)
@@ -1005,7 +1242,7 @@ def main():
                     })
     else:
         logger.info("\n" + "="*80)
-        logger.info("步骤1和步骤2: 已跳过（使用 --resume 模式，有足够的待处理论文）")
+        logger.info("步骤1和步骤2: 已跳过（使用 --resume 模式）")
         logger.info("="*80)
     
     # 步骤3: 下载PDF并提取流程图
@@ -1013,232 +1250,119 @@ def main():
     logger.info("步骤3: 下载PDF并提取流程图")
     logger.info("="*80)
     
+    # 清理之前已处理但不符合条件的论文的PDF文件
+    logger.info("清理已处理但不符合条件的论文的PDF文件...")
+    cleaned_count = 0
+    if progress_file.exists():
+        processed_ids = set()
+        with open(progress_file, 'r') as f:
+            processed_ids = set(line.strip() for line in f if line.strip())
+        
+        # 检查results目录，只有成功处理的论文才保留PDF
+        results_dir = output_dir / "results"
+        valid_ids = set()
+        if results_dir.exists():
+            for arxiv_id_dir in results_dir.iterdir():
+                if arxiv_id_dir.is_dir() and (arxiv_id_dir / "original.png").exists():
+                    valid_ids.add(arxiv_id_dir.name)
+        
+        # 删除不在valid_ids中的已处理论文的PDF
+        for arxiv_id in processed_ids:
+            if arxiv_id not in valid_ids:
+                pdf_path = PDF_DIR / f"{arxiv_id}.pdf"
+                if pdf_path.exists():
+                    pdf_path.unlink()
+                    cleaned_count += 1
+                    logger.debug(f"  已删除不符合条件的PDF: {arxiv_id}.pdf")
+        
+        if cleaned_count > 0:
+            logger.info(f"已清理 {cleaned_count} 个不符合条件的PDF文件")
+    
     to_download_papers = db.get_papers_by_status('TobeDownloaded', limit=args.max_papers)
     if not to_download_papers:
         logger.warning("没有待下载的论文")
         # 如果使用resume且已有进度，检查是否需要继续收集论文
         if args.resume and len(processed_arxiv_ids) > 0 and len(processed_arxiv_ids) < args.num_images:
-            logger.warning(f"当前已处理 {len(processed_arxiv_ids)} 张图，目标 {args.num_images} 张，但数据库中没有更多待处理论文")
-            logger.info("将自动执行步骤1和步骤2以收集更多论文...")
-            # 自动收集更多论文
-            collect_papers_from_multiple_categories(db, args.max_papers, args.year)
-            pending_papers = db.get_papers_by_status('pendingTitles', limit=args.max_papers)
-            if pending_papers:
-                from fetchers import fetch_paper_info
-                logger.info(f"获取 {len(pending_papers)} 篇论文的详细信息...")
-                for i, paper in enumerate(pending_papers, 1):
-                    logger.info(f"获取论文信息 {i}/{len(pending_papers)}: {paper['title'][:50]}...")
-                    info = fetch_paper_info(paper['title'])
-                    if info:
-                        db.update_paper_info(paper['id'], {
-                            'arxiv_id': info.get('arxiv_id'),
-                            'pdf_url': info.get('pdf_url'),
-                            'authors': info.get('authors', []),
-                            'abstract': info.get('abstract'),
-                            'status': 'TobeDownloaded'
-                        })
-            # 重新获取待下载论文
-            to_download_papers = db.get_papers_by_status('TobeDownloaded', limit=args.max_papers)
-            if not to_download_papers:
-                logger.error("收集论文后仍然没有待下载的论文，退出")
-                return
-        else:
-            return
+            logger.info(f"当前已处理 {len(processed_arxiv_ids)} 张图，目标 {args.num_images} 张，但数据库中没有更多待处理论文")
+            logger.info("建议：重新运行脚本（不使用--resume）以收集更多论文")
+        return
     
     results = []
     # 从已处理的论文数开始计数（断点续传）
     images_collected = len(processed_arxiv_ids) if args.resume else 0
-    papers_processed = 0
     
     # 保存进度文件
     progress_file = output_dir / ".progress"
     
+    # 线程锁，用于线程安全的进度保存和计数
+    progress_lock = Lock()
+    images_collected_lock = Lock()
+    
     logger.info(f"当前进度: {images_collected}/{args.num_images} 张图（已处理 {len(processed_arxiv_ids)} 篇论文）")
+    logger.info(f"使用混合并行模式: 论文级别并行数={args.parallel_papers}, 图片生成并行数={args.parallel_images}, 评估并行数={args.parallel_eval}")
     
-    # 检查是否有未处理的论文
-    unprocessed_papers = [p for p in to_download_papers 
-                          if not (args.resume and p.get('arxiv_id') in processed_arxiv_ids)]
-    
-    if not unprocessed_papers and images_collected < args.num_images:
-        logger.warning(f"所有待下载论文都已被处理，但还未达到目标 ({images_collected}/{args.num_images})")
-        logger.info("自动收集更多论文...")
-        # 收集更多论文
-        collect_papers_from_multiple_categories(db, args.max_papers, args.year)
-        # 获取论文信息
-        pending_papers = db.get_papers_by_status('pendingTitles', limit=args.max_papers)
-        if pending_papers:
-            from fetchers import fetch_paper_info
-            logger.info(f"获取 {len(pending_papers)} 篇论文的详细信息...")
-            for i, paper in enumerate(pending_papers[:50], 1):  # 限制获取50篇，避免耗时过长
-                logger.info(f"获取论文信息 {i}/{min(50, len(pending_papers))}: {paper['title'][:50]}...")
-                info = fetch_paper_info(paper['title'])
-                if info:
-                    db.update_paper_info(paper['id'], {
-                        'arxiv_id': info.get('arxiv_id'),
-                        'pdf_url': info.get('pdf_url'),
-                        'authors': info.get('authors', []),
-                        'abstract': info.get('abstract'),
-                        'status': 'TobeDownloaded'
-                    })
-        # 重新获取待下载论文
-        to_download_papers = db.get_papers_by_status('TobeDownloaded', limit=args.max_papers)
-        unprocessed_papers = [p for p in to_download_papers 
-                              if not (args.resume and p.get('arxiv_id') in processed_arxiv_ids)]
-        if not unprocessed_papers:
-            logger.error("收集论文后仍然没有未处理的论文，退出")
-            return
-    
+    # 过滤掉已处理的论文
+    papers_to_process = []
     for paper in to_download_papers:
         if images_collected >= args.num_images:
-            logger.info(f"已达到目标数量 {args.num_images} 张图，停止处理")
             break
-        
         arxiv_id = paper.get('arxiv_id')
-        pdf_url = paper.get('pdf_url')
-        
-        if not arxiv_id or not pdf_url:
+        if not arxiv_id or not paper.get('pdf_url'):
             continue
-        
-        # 检查是否已处理（断点续传）
         if args.resume and arxiv_id in processed_arxiv_ids:
-            logger.info(f"跳过已处理的论文: {arxiv_id}")
             continue
+        papers_to_process.append(paper)
+    
+    if not papers_to_process:
+        logger.warning("没有待处理的论文")
+        return
+    
+    # 使用ThreadPoolExecutor并行处理多篇论文
+    papers_processed = 0
+    with ThreadPoolExecutor(max_workers=args.parallel_papers) as executor:
+        # 提交所有论文处理任务
+        future_to_paper = {
+            executor.submit(process_single_paper, paper, api_client, output_dir, args, 
+                          db, progress_file, progress_lock, processed_arxiv_ids): paper
+            for paper in papers_to_process
+        }
         
-        papers_processed += 1
-        logger.info(f"\n处理论文 {papers_processed}: {paper['title'][:60]}...")
-        
-        # 下载PDF
-        pdf_path = PDF_DIR / f"{arxiv_id}.pdf"
-        if not pdf_path.exists():
-            from processors import download_pdf
-            logger.info(f"  下载PDF: {arxiv_id}")
-            if not download_pdf(pdf_url, pdf_path):
-                logger.warning(f"  PDF下载失败，跳过")
-                continue
-        
-        # 提取流程图
-        extractor = FlowchartExtractor(pdf_path, output_dir / "original_images" / arxiv_id)
-        flowchart_path = extractor.extract_flowchart()
-        
-        if not flowchart_path:
-            logger.warning(f"  未找到流程图，跳过此论文")
-            # 删除此论文记录
-            db.delete_paper(paper['id'])
-            continue
-        
-        # 生成prompt
-        logger.info(f"  生成prompt...")
-        prompts = api_client.image_to_text(flowchart_path, args.num_prompts)
-        
-        if not prompts:
-            logger.warning(f"  未能生成prompt，跳过")
-            continue
-        
-        # 并行生成图片
-        logger.info(f"  并行生成 {len(prompts)} 张图片...")
-        gen_dir = output_dir / "generated_images" / arxiv_id
-        gen_dir.mkdir(parents=True, exist_ok=True)
-        
-        def generate_image(i, prompt):
-            gen_path = gen_dir / f"prompt_{i}.png"
-            if api_client.text_to_image(prompt, gen_path):
-                return (i, gen_path, prompt)
-            return None
-        
-        generated_results = []
-        with ThreadPoolExecutor(max_workers=args.parallel_images) as executor:
-            futures = {executor.submit(generate_image, i+1, p): i for i, p in enumerate(prompts)}
-            for future in as_completed(futures):
+        # 处理完成的任务
+        for future in as_completed(future_to_paper):
+            paper = future_to_paper[future]
+            papers_processed += 1
+            
+            try:
                 result = future.result()
-                if result:
-                    generated_results.append(result)
-                    logger.info(f"    ✓ Prompt {result[0]} 图片已生成")
-        
-        # 按原始顺序排序
-        generated_results.sort(key=lambda x: x[0])
-        generated_paths = [r[1] for r in generated_results]
-        generated_prompts = [r[2] for r in generated_results]
-        
-        if generated_paths:
-            # 并行评估相似度并排名
-            logger.info(f"  并行评估 {len(generated_paths)} 张图片的相似度...")
-            evaluator = ImageSimilarityEvaluator()
-            
-            def evaluate_image(i, gen_path):
-                scores = evaluator.evaluate_similarity(flowchart_path, gen_path)
-                return {
-                    'index': i + 1,
-                    'path': gen_path,
-                    'prompt': generated_prompts[i],
-                    'scores': scores,
-                    'weighted_score': scores['weighted_score']
-                }
-            
-            similarity_scores = []
-            with ThreadPoolExecutor(max_workers=args.parallel_eval) as executor:
-                futures = {executor.submit(evaluate_image, i, path): i for i, path in enumerate(generated_paths)}
-                for future in as_completed(futures):
-                    result = future.result()
-                    similarity_scores.append(result)
-                    logger.info(f"    Prompt {result['index']} 相似度: SSIM={result['scores']['ssim']:.3f}, "
-                              f"特征匹配={result['scores']['feature_match']:.3f}, "
-                              f"深度学习={result['scores']['deep_learning']:.3f}, "
-                              f"加权得分={result['weighted_score']:.3f}")
-            
-            # 按加权得分排序（降序）
-            similarity_scores.sort(key=lambda x: x['weighted_score'], reverse=True)
-            
-            # 保存结果
-            result_dir = output_dir / "results" / arxiv_id
-            result_dir.mkdir(parents=True, exist_ok=True)
-            
-            # 复制原图
-            import shutil
-            final_original = result_dir / "original.png"
-            shutil.copy2(flowchart_path, final_original)
-            
-            # 按排名复制生成的图片（排名第一的为generated_1.png）
-            for rank, item in enumerate(similarity_scores, 1):
-                final_gen = result_dir / f"generated_{rank}.png"
-                shutil.copy2(item['path'], final_gen)
-            
-            # 保存prompt到文件（按排名顺序）
-            prompts_file = result_dir / "prompts.txt"
-            with open(prompts_file, 'w', encoding='utf-8') as f:
-                f.write(f"论文: {paper['title']}\n")
-                f.write(f"来源: {paper.get('source', 'N/A')}\n")
-                f.write(f"arXiv ID: {arxiv_id}\n")
-                f.write("="*80 + "\n\n")
-                f.write("排名说明：按相似度得分从高到低排序\n")
-                f.write("="*80 + "\n\n")
                 
-                for rank, item in enumerate(similarity_scores, 1):
-                    f.write(f"排名 {rank} (原始Prompt {item['index']}):\n")
-                    f.write(f"加权得分: {item['weighted_score']:.4f}\n")
-                    f.write(f"  - SSIM: {item['scores']['ssim']:.4f}\n")
-                    f.write(f"  - 特征匹配: {item['scores']['feature_match']:.4f}\n")
-                    f.write(f"  - 深度学习: {item['scores']['deep_learning']:.4f}\n")
-                    f.write(f"\nPrompt内容:\n{item['prompt']}\n\n")
-                    f.write("-"*80 + "\n\n")
+                if result:
+                    # 成功处理
+                    with images_collected_lock:
+                        images_collected += 1
+                        current_count = images_collected
+                    
+                    results.append(result)
+                    logger.info(f"✓ 成功处理第 {current_count}/{args.num_images} 张流程图 "
+                              f"(论文: {paper['title'][:50]}..., "
+                              f"最佳相似度: {result['similarity_scores'][0]['weighted_score']:.3f})")
+                    
+                    # 检查是否达到目标
+                    if current_count >= args.num_images:
+                        logger.info(f"已达到目标数量 {args.num_images} 张图，停止提交新任务")
+                        # 取消未完成的任务
+                        for f in future_to_paper:
+                            if not f.done():
+                                f.cancel()
+                        break
+                else:
+                    logger.debug(f"论文处理失败或跳过: {paper.get('arxiv_id', 'unknown')}")
+                    
+            except Exception as e:
+                logger.error(f"处理论文时发生异常: {paper.get('title', 'unknown')} - {e}", exc_info=True)
             
-            results.append({
-                'paper': paper,
-                'arxiv_id': arxiv_id,
-                'original_image': final_original,
-                'prompts': [item['prompt'] for item in similarity_scores],
-                'generated_images': [result_dir / f"generated_{i+1}.png" for i in range(len(generated_paths))],
-                'similarity_scores': similarity_scores
-            })
-            
-            images_collected += 1
-            logger.info(f"✓ 成功处理第 {images_collected}/{args.num_images} 张流程图 "
-                      f"(最佳相似度: {similarity_scores[0]['weighted_score']:.3f})")
-            
-            # 保存进度
-            with open(progress_file, 'a') as f:
-                f.write(f"{arxiv_id}\n")
-        else:
-            logger.warning(f"  所有图片生成失败，跳过")
+            # 显示进度
+            if papers_processed % 10 == 0:
+                logger.info(f"已处理 {papers_processed} 篇论文，当前收集 {images_collected}/{args.num_images} 张图")
     
     # 生成总结报告和精选结果
     logger.info("\n" + "="*80)
